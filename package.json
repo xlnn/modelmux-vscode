@@ -2,7 +2,7 @@
   "name": "codex-config-switcher",
   "displayName": "ModelMux: AI CLI Model Manager",
   "description": "A secure visual model and provider manager for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes.",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "publisher": "cherry-local",
   "license": "MIT",
   "icon": "media/modelmux.png",
@@ -354,7 +354,7 @@
     "build": "esbuild extension.js --bundle --minify --legal-comments=none --platform=node --target=node20 --main-fields=module,main --external:vscode --outfile=dist/extension.js",
     "test": "npm run build && node test/manifest-smoke.js && node test/linux-smoke.js && node test/config-smoke.js && node test/activation-smoke.js && node test/multi-cli-smoke.js && node test/bundle-smoke.js",
     "vscode:prepublish": "npm run build",
-    "package": "npm run icon && npm run build && vsce package --out modelmux-1.1.1.vsix"
+    "package": "npm run icon && npm run build && vsce package --out modelmux-1.1.2.vsix"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.0",

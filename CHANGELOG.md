@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+- 修正 Marketplace 清单中的仓库、主页和问题反馈链接。
+- 改进 Linux Token helper 冒烟测试的路径断言。
+
 ## 1.1.0
 
 - 品牌更新为 ModelMux，仓库名为 `modelmux-vscode`；保留原扩展 ID 以兼容旧版升级数据。
