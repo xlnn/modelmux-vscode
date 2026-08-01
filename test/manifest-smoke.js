@@ -10,8 +10,8 @@ const extensionSource = fs.readFileSync(path.join(root, 'extension.js'), 'utf8')
 const dashboardSource = fs.readFileSync(path.join(root, 'media', 'dashboard.js'), 'utf8');
 
 assert.strictEqual(manifest.name, 'codex-config-switcher', 'the existing extension ID must remain stable for upgrades');
-assert.strictEqual(manifest.displayName, 'ModelMux：AI CLI 模型管理器');
-assert.strictEqual(manifest.version, '1.1.0');
+assert.strictEqual(manifest.displayName, 'ModelMux: AI CLI Model Manager');
+assert.strictEqual(manifest.version, '1.1.1');
 assert(manifest.repository.url.endsWith('/modelmux-vscode.git'));
 assert.strictEqual(manifest.icon, 'media/modelmux.png');
 assert(manifest.keywords.length <= 30, 'Marketplace supports at most 30 keywords');
