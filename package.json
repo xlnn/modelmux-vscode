@@ -3,7 +3,7 @@
   "displayName": "ModelMux：AI CLI 模型管理器",
   "description": "A secure visual model and provider manager for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes.",
   "version": "1.1.0",
-  "publisher": "lichao-local",
+  "publisher": "cherry-local",
   "license": "MIT",
   "icon": "media/modelmux.png",
   "repository": {
