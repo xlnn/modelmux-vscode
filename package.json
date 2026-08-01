@@ -8,11 +8,11 @@
   "icon": "media/modelmux.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cherry-local/modelmux-vscode.git"
+    "url": "https://github.com/xlnn/modelmux-vscode.git"
   },
-  "homepage": "https://github.com/cherry-local/modelmux-vscode#readme",
+  "homepage": "https://github.com/xlnn/modelmux-vscode#readme",
   "bugs": {
-    "url": "https://github.com/cherry-local/modelmux-vscode/issues"
+    "url": "https://github.com/xlnn/modelmux-vscode/issues"
   },
   "engines": {
     "vscode": "^1.90.0"
