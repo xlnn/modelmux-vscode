@@ -62,7 +62,12 @@ const api = extension.__test;
   assert(api, 'test API is exported');
   const files = api.pathsForCurrentUser();
   assert.strictEqual(files.config, path.join(home, '.codex', 'config.toml'));
-  assert(files.token.startsWith(tmp + path.sep), `fallback token should stay under TMPDIR: ${files.token}`);
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'user';
+  const preferredRuntimeToken = path.join(`/run/user/${uid}`, `codex-model-profile-token-${uid}`);
+  assert(
+    files.token === preferredRuntimeToken || files.token.startsWith(tmp + path.sep),
+    `runtime token should use /run/user/<uid> when private, otherwise stay under TMPDIR: ${files.token}`
+  );
 
   const cat = api.resolveUnixCatCommand();
   assert(['/bin/cat', '/usr/bin/cat', 'cat'].includes(cat));
