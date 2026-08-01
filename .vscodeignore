@@ -1,0 +1,10 @@
+.git/**
+.gitignore
+.github/**
+.vscode/**
+extension.js
+node_modules/**
+scripts/**
+test/**
+media/modelmux-color.svg
+*.vsix

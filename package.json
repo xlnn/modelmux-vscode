@@ -1,0 +1,378 @@
+{
+  "name": "codex-config-switcher",
+  "displayName": "ModelMux：AI CLI 模型管理器",
+  "description": "A secure visual model and provider manager for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes.",
+  "version": "1.1.0",
+  "publisher": "lichao-local",
+  "license": "MIT",
+  "icon": "media/modelmux.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lichao-local/modelmux-vscode.git"
+  },
+  "homepage": "https://github.com/lichao-local/modelmux-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/lichao-local/modelmux-vscode/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "modelmux",
+    "codex",
+    "claude code",
+    "gemini cli",
+    "grok build",
+    "opencode",
+    "openclaw",
+    "hermes agent",
+    "remote ssh",
+    "model switcher",
+    "provider",
+    "responses api",
+    "bedrock",
+    "windows",
+    "linux",
+    "wsl",
+    "cross platform",
+    "graphical ui",
+    "macos",
+    "diagnostics",
+    "security",
+    "ollama",
+    "lm studio",
+    "azure openai",
+    "environment variable",
+    "secretstorage",
+    "import export",
+    "dev container",
+    "codespaces"
+  ],
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:codexConfigSwitcher.openMenu",
+    "onCommand:codexConfigSwitcher.switchProfile",
+    "onCommand:codexConfigSwitcher.enableCustom",
+    "onCommand:codexConfigSwitcher.addProfile",
+    "onCommand:codexConfigSwitcher.editProfile",
+    "onCommand:codexConfigSwitcher.deleteProfile",
+    "onCommand:codexConfigSwitcher.refreshModels",
+    "onCommand:codexConfigSwitcher.restoreOriginal",
+    "onCommand:codexConfigSwitcher.showStatus",
+    "onCommand:codexConfigSwitcher.clearApiKey",
+    "onView:codexConfigSwitcher.dashboard",
+    "onCommand:codexConfigSwitcher.openDashboard",
+    "onCommand:codexConfigSwitcher.refreshDashboard",
+    "onCommand:codexConfigSwitcher.runDiagnostics",
+    "onCommand:codexConfigSwitcher.exportProfiles",
+    "onCommand:codexConfigSwitcher.importProfiles"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexConfigSwitcher.openDashboard",
+        "title": "ModelMux: Open dashboard",
+        "category": "ModelMux",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
+        "command": "codexConfigSwitcher.refreshDashboard",
+        "title": "ModelMux: Refresh dashboard",
+        "category": "ModelMux",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexConfigSwitcher.openMenu",
+        "title": "ModelMux: Open menu",
+        "category": "ModelMux",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "codexConfigSwitcher.switchProfile",
+        "title": "ModelMux: Switch provider / model",
+        "category": "ModelMux",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "codexConfigSwitcher.enableCustom",
+        "title": "ModelMux: Switch custom model (legacy command)",
+        "category": "ModelMux"
+      },
+      {
+        "command": "codexConfigSwitcher.addProfile",
+        "title": "ModelMux: Add provider",
+        "category": "ModelMux",
+        "icon": "$(add)"
+      },
+      {
+        "command": "codexConfigSwitcher.editProfile",
+        "title": "ModelMux: Edit provider",
+        "category": "ModelMux",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "codexConfigSwitcher.deleteProfile",
+        "title": "ModelMux: Delete provider",
+        "category": "ModelMux",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "codexConfigSwitcher.refreshModels",
+        "title": "ModelMux: Refresh model list",
+        "category": "ModelMux",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "codexConfigSwitcher.restoreOriginal",
+        "title": "ModelMux: Restore current CLI configuration",
+        "category": "ModelMux",
+        "icon": "$(history)"
+      },
+      {
+        "command": "codexConfigSwitcher.showStatus",
+        "title": "ModelMux: Show status",
+        "category": "ModelMux",
+        "icon": "$(info)"
+      },
+      {
+        "command": "codexConfigSwitcher.runDiagnostics",
+        "title": "ModelMux: Run diagnostics for current CLI",
+        "category": "ModelMux",
+        "icon": "$(pass)"
+      },
+      {
+        "command": "codexConfigSwitcher.clearApiKey",
+        "title": "ModelMux: Clear an API key",
+        "category": "ModelMux",
+        "icon": "$(key)"
+      },
+      {
+        "command": "codexConfigSwitcher.exportProfiles",
+        "title": "ModelMux: Export provider profiles",
+        "category": "ModelMux",
+        "icon": "$(export)"
+      },
+      {
+        "command": "codexConfigSwitcher.importProfiles",
+        "title": "ModelMux: Import provider profiles",
+        "category": "ModelMux",
+        "icon": "$(import)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "codexConfigSwitcher.enableCustom",
+          "when": "false"
+        },
+        {
+          "command": "codexConfigSwitcher.refreshDashboard"
+        },
+        {
+          "command": "codexConfigSwitcher.openDashboard"
+        },
+        {
+          "command": "codexConfigSwitcher.openMenu"
+        },
+        {
+          "command": "codexConfigSwitcher.switchProfile"
+        },
+        {
+          "command": "codexConfigSwitcher.addProfile"
+        },
+        {
+          "command": "codexConfigSwitcher.editProfile"
+        },
+        {
+          "command": "codexConfigSwitcher.deleteProfile"
+        },
+        {
+          "command": "codexConfigSwitcher.refreshModels"
+        },
+        {
+          "command": "codexConfigSwitcher.restoreOriginal"
+        },
+        {
+          "command": "codexConfigSwitcher.showStatus"
+        },
+        {
+          "command": "codexConfigSwitcher.runDiagnostics"
+        },
+        {
+          "command": "codexConfigSwitcher.clearApiKey"
+        },
+        {
+          "command": "codexConfigSwitcher.exportProfiles"
+        },
+        {
+          "command": "codexConfigSwitcher.importProfiles"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "codexConfigSwitcher.refreshDashboard",
+          "when": "view == codexConfigSwitcher.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codexConfigSwitcher.addProfile",
+          "when": "view == codexConfigSwitcher.dashboard",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ModelMux",
+      "properties": {
+        "codexConfigSwitcher.approvalPolicy": {
+          "type": "string",
+          "enum": [
+            "untrusted",
+            "on-request",
+            "never"
+          ],
+          "default": "on-request",
+          "description": "Command approval policy written to Codex config.toml."
+        },
+        "codexConfigSwitcher.sandboxMode": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "default": "workspace-write",
+          "description": "Sandbox mode written to Codex config.toml."
+        },
+        "codexConfigSwitcher.modelRequestTimeoutMs": {
+          "type": "number",
+          "minimum": 1000,
+          "maximum": 120000,
+          "default": 15000,
+          "description": "Timeout in milliseconds for custom provider model discovery. TLS exceptions are configured per provider and disabled by default."
+        },
+        "codexConfigSwitcher.uiFontSize": {
+          "type": "integer",
+          "scope": "application",
+          "minimum": 10,
+          "maximum": 20,
+          "default": 13,
+          "description": "Base font size in pixels for the ModelMux dashboard. Configure it from the in-app Settings panel."
+        },
+        "codexConfigSwitcher.uiFontFamily": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "default",
+            "system",
+            "monospace"
+          ],
+          "enumDescriptions": [
+            "Use the current VS Code interface font.",
+            "Use the operating system interface font.",
+            "Use the current VS Code editor monospace font."
+          ],
+          "default": "default",
+          "description": "Font family used by the ModelMux dashboard."
+        },
+        "codexConfigSwitcher.uiLanguage": {
+          "type": "string",
+          "scope": "application",
+          "enum": [
+            "en",
+            "zh-CN"
+          ],
+          "enumDescriptions": [
+            "English",
+            "简体中文"
+          ],
+          "default": "en",
+          "description": "Display language used by the ModelMux dashboard."
+        },
+        "codexConfigSwitcher.model": {
+          "type": "string",
+          "default": "",
+          "description": "Legacy 0.1.x migration field.",
+          "deprecationMessage": "This setting is retained for migration only. Use ModelMux: Add provider."
+        },
+        "codexConfigSwitcher.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Legacy 0.1.x migration field.",
+          "deprecationMessage": "This setting is retained for migration only."
+        },
+        "codexConfigSwitcher.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "default": "auto",
+          "description": "Legacy 0.1.x migration field.",
+          "deprecationMessage": "This setting is retained for migration only."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexModelManager",
+          "title": "ModelMux",
+          "icon": "media/modelmux.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexModelManager": [
+        {
+          "type": "webview",
+          "id": "codexConfigSwitcher.dashboard",
+          "name": "Model manager",
+          "icon": "media/modelmux.svg",
+          "contextualTitle": "ModelMux"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "check": "node --check extension.js && node --check media/dashboard.js",
+    "icon": "node scripts/generate-icon.js",
+    "build": "esbuild extension.js --bundle --minify --legal-comments=none --platform=node --target=node20 --main-fields=module,main --external:vscode --outfile=dist/extension.js",
+    "test": "npm run build && node test/manifest-smoke.js && node test/linux-smoke.js && node test/config-smoke.js && node test/activation-smoke.js && node test/multi-cli-smoke.js && node test/bundle-smoke.js",
+    "vscode:prepublish": "npm run build",
+    "package": "npm run icon && npm run build && vsce package --out modelmux-1.1.0.vsix"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.8",
+    "sharp": "^0.34.3"
+  },
+  "dependencies": {
+    "json5": "^2.2.3",
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.8.1"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "ModelMux needs access to CLI user configuration and runtime credential files on the current extension host."
+    }
+  }
+}
