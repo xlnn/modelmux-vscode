@@ -1,4 +1,4 @@
-# ModelMux: AI CLI Model Manager 1.1.0
+# ModelMux: AI CLI Model Manager 1.1.2
 
 [中文说明](#中文说明)
 
@@ -20,7 +20,7 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 - Adjust the dashboard font size from `10px` to `20px` in the ModelMux Settings panel.
 - Restore the VS Code default font or reset the complete appearance configuration with one action.
 
-## What's New in 1.1.0
+## What's New in 1.1.2
 
 - Renamed and redesigned the extension as **ModelMux**.
 - Added a dedicated appearance and language settings interface.
@@ -29,7 +29,7 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 - Added VS Code default, system UI, and monospace font options.
 - Added new monochrome Activity Bar and color Marketplace icons.
 - Added responsive safeguards for narrow sidebars at all supported font sizes.
-- Kept the existing Marketplace extension ID so upgrades preserve profiles, state, and SecretStorage credentials.
+- Kept the existing command and configuration IDs so local profiles and settings remain compatible.
 
 ## CLI Support Matrix
 
@@ -50,7 +50,7 @@ Provider cards show whether a profile is compatible with the currently selected 
 1. Open the VS Code Extensions view.
 2. Open the `...` menu in the upper-right corner.
 3. Select **Install from VSIX...**.
-4. Select `modelmux-1.1.0.vsix`.
+4. Select `modelmux-1.1.2.vsix`.
 5. Run `Developer: Reload Window`.
 
 For Remote-SSH, WSL, Dev Containers, or Codespaces, install ModelMux in the corresponding remote extension host. ModelMux only changes CLI configuration files in the environment where the extension is running.
@@ -164,26 +164,26 @@ npm run package
 The package command generates:
 
 ```text
-modelmux-1.1.0.vsix
+modelmux-1.1.2.vsix
 ```
 
 The test suite covers branding and Marketplace metadata, appearance settings, default-English localization, Codex configuration generation, all six additional CLI adapters, concurrent target state, isolated restore, credential handling, model discovery security, and the bundled extension entry point.
 
 ## Publishing
 
-Local Marketplace publishing requires a Personal Access Token for the `lichao-local` publisher:
+Local Marketplace publishing requires a Personal Access Token for the `cherry-local` publisher:
 
 ```bash
-npx vsce publish --packagePath modelmux-1.1.0.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.1.2.vsix -p "$VSCE_PAT"
 ```
 
-The repository is configured as `lichao-local/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages the VSIX, attaches it to a GitHub Release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
+The repository is configured as `xlnn/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages the VSIX, attaches it to a GitHub Release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
 
 ## Notes
 
 - New configuration normally applies to newly started CLI sessions.
 - SecretStorage values do not migrate between devices through profile exports.
-- The Marketplace extension ID remains `lichao-local.codex-config-switcher` to preserve upgrade continuity and existing extension-scoped data. The product name shown to users is ModelMux.
+- The Marketplace extension ID is `cherry-local.codex-config-switcher`. The product name shown to users is ModelMux.
 - ModelMux is not affiliated with OpenAI, Anthropic, Google, xAI, Amazon, OpenCode, OpenClaw, Nous Research, Ollama, or LM Studio.
 
 ## License
@@ -194,7 +194,7 @@ MIT
 
 ## 中文说明
 
-### ModelMux：AI CLI 模型管理器 1.1.0
+### ModelMux：AI CLI 模型管理器 1.1.2
 
 一个面向 **Windows、macOS、Linux、WSL、Remote-SSH、Dev Container 与 GitHub Codespaces** 的 VS Code 图形化 AI CLI 配置管理插件。
 
@@ -202,7 +202,7 @@ MIT
 
 ## 1.1.0 ModelMux
 
-- 插件品牌更新为 ModelMux，仓库名为 `modelmux-vscode`；保留原 Marketplace ID 以延续旧版升级和 SecretStorage 数据。
+- 插件品牌更新为 ModelMux，仓库名为 `modelmux-vscode`；保留原命令和配置 ID 以兼容本地 Profile 与设置。
 - 新增独立设置界面，字体大小控制不再占用标题栏。
 - 支持 VS Code 默认字体、系统界面字体和等宽字体，可一键恢复默认字体或默认外观。
 - 新增英语与简体中文界面，首次安装默认显示英语。
@@ -326,10 +326,10 @@ npm run package
 
 ## 发布
 
-本地发布需要 Marketplace Publisher `lichao-local` 的 Personal Access Token：
+本地发布需要 Marketplace Publisher `cherry-local` 的 Personal Access Token：
 
 ```bash
-npx vsce publish --packagePath modelmux-1.1.0.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.1.2.vsix -p "$VSCE_PAT"
 ```
 
 仓库包含 `.github/workflows/release.yml`。在 GitHub Repository Secret 中配置 `VSCE_PAT` 后，发布 GitHub Release 会自动运行测试、附加 VSIX，并上传到 VS Code Marketplace。
