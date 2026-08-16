@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+- 将 `codexConfigSwitcher.approvalPolicy` 与 `codexConfigSwitcher.sandboxMode` 设为机器级配置，并在扩展清单中限制不受信任工作区修改这两项。
+- Windows 私有文件写入改为失败即停止：无法确认当前账户或无法应用并验证 ACL 时不再继续，并清理该次写入产生的不完整文件。
+- Provider 状态变更统一串行处理，避免并发面板与命令操作互相覆盖。
+- OpenCode 新增 Anthropic Messages 网关兼容。
+- 重构为适合侧边栏的紧凑工作台：单一 CLI 选择器、明确的托管状态、Provider 操作菜单与命令面板意图直达。
+- 新增 Provider 启用和恢复 Diff 预览、面板内结构化诊断与连接测试；预览不会修改真实 CLI 配置。
+- 导入前校验并预览新增/冲突项，支持跳过或替换冲突；导出采用字段白名单并脱敏敏感 Header/查询参数。
+- 开发与发布升级到 Node.js 22，bundle 继续以 Node 20 为目标；新增 Ubuntu、Windows、macOS 的 pull request 与 `main` push CI，统一运行安装、检查、测试和构建。
+- 新增导出脱敏、Webview CSP/DOM/可访问性与导入冲突 smoke test，并在构建时同步 Codicon CSS/字体运行时资源。
+- VSIX 文件名改为从包版本动态生成 `modelmux-${npm_package_version}.vsix`。
+- 保留包名 `codex-config-switcher` 与 Publisher `cherry-local`，Marketplace 扩展 ID 与 1.1.2 相同；更早的 `cherry-local.codex-config-switcher` 属于不同扩展身份，需要导出/导入 Provider 并重新录入密钥。
+
 ## 1.1.2
 
 - 修正 Marketplace 清单中的仓库、主页和问题反馈链接。

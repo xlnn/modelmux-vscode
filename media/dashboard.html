@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; img-src {{CSP_SOURCE}} data:; font-src {{CSP_SOURCE}}; style-src {{CSP_SOURCE}}; script-src 'nonce-{{NONCE}}';">
+  <link rel="stylesheet" href="{{CODICON_STYLE_URI}}">
+  <link rel="stylesheet" href="{{STYLE_URI}}">
+  <title>ModelMux</title>
+</head>
+<body>
+  <main id="app" aria-labelledby="appTitle" aria-busy="true">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <div class="brand-copy">
+          <div class="title-row">
+            <h1 id="appTitle">ModelMux</h1>
+            <span id="versionBadge" class="version-badge"></span>
+          </div>
+          <p data-i18n="brandTagline">Provider workspace for AI CLIs</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="addProvider" class="icon-button" type="button" title="Add provider" aria-label="Add provider" data-i18n-title="addProvider" data-i18n-aria="addProvider">
+          <span class="codicon codicon-add" aria-hidden="true"></span>
+        </button>
+        <div class="menu-host">
+          <button id="toolsMenuButton" class="icon-button" type="button" title="Tools" aria-label="Tools" aria-haspopup="menu" aria-expanded="false" aria-controls="toolsMenu" data-i18n-title="tools" data-i18n-aria="tools">
+            <span class="codicon codicon-ellipsis" aria-hidden="true"></span>
+          </button>
+          <div id="toolsMenu" class="menu" role="menu" aria-label="Tools" data-i18n-aria="tools" hidden>
+            <button id="previewRestore" type="button" role="menuitem"><span class="codicon codicon-preview" aria-hidden="true"></span><span data-i18n="previewRestore">Preview restore</span></button>
+            <button id="restoreOriginal" type="button" role="menuitem"><span class="codicon codicon-discard" aria-hidden="true"></span><span data-i18n="restoreOriginal">Restore original</span></button>
+            <button id="openConfig" type="button" role="menuitem"><span class="codicon codicon-go-to-file" aria-hidden="true"></span><span data-i18n="openConfig">Open config</span></button>
+            <button id="runDiagnostics" type="button" role="menuitem"><span class="codicon codicon-pulse" aria-hidden="true"></span><span data-i18n="diagnostics">Diagnostics</span></button>
+            <div class="menu-separator" role="separator"></div>
+            <button id="exportProfiles" type="button" role="menuitem"><span class="codicon codicon-export" aria-hidden="true"></span><span data-i18n="exportProfiles">Export profiles</span></button>
+            <button id="importProfiles" type="button" role="menuitem"><span class="codicon codicon-cloud-upload" aria-hidden="true"></span><span data-i18n="importProfiles">Import profiles</span></button>
+            <div class="menu-separator" role="separator"></div>
+            <button id="appearanceSettings" type="button" role="menuitem"><span class="codicon codicon-settings-gear" aria-hidden="true"></span><span data-i18n="settings">Settings</span></button>
+            <button id="reloadWindow" type="button" role="menuitem"><span class="codicon codicon-debug-restart" aria-hidden="true"></span><span data-i18n="reload">Reload window</span></button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="target-bar" aria-labelledby="targetHeading">
+      <label id="targetHeading" for="targetSelect" data-i18n="cliTarget">CLI target</label>
+      <select id="targetSelect" aria-describedby="targetContext">
+        <option value="codex">Codex</option>
+        <option value="claude">Claude Code</option>
+        <option value="gemini">Gemini CLI</option>
+        <option value="grok">Grok Build</option>
+        <option value="opencode">OpenCode</option>
+        <option value="openclaw">OpenClaw</option>
+        <option value="hermes">Hermes</option>
+      </select>
+      <span id="targetContext" class="target-context" data-i18n="loadingConfig">Reading configuration...</span>
+    </section>
+
+    <section id="statusBanner" class="status-banner loading" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="statusTitle" tabindex="-1">
+      <span id="statusIcon" class="status-icon codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></span>
+      <div class="status-copy">
+        <h2 id="statusTitle" data-i18n="loadingConfig">Reading configuration...</h2>
+        <p id="statusDetail"></p>
+        <ul id="statusMeta" class="status-meta" aria-label="Configuration details" data-i18n-aria="configurationDetails"></ul>
+      </div>
+    </section>
+
+    <section class="providers-section" aria-labelledby="providersTitle">
+      <header class="section-header">
+        <div class="section-title">
+          <h2 id="providersTitle" data-i18n="providersAndModels">Providers &amp; models</h2>
+          <span id="profileCount" class="count"></span>
+        </div>
+        <button id="refreshState" class="icon-button" type="button" title="Refresh status" aria-label="Refresh status" data-i18n-title="refreshStatus" data-i18n-aria="refreshStatus">
+          <span class="codicon codicon-refresh" aria-hidden="true"></span>
+        </button>
+      </header>
+      <label class="search-box">
+        <span class="sr-only" data-i18n="searchAria">Search providers or models</span>
+        <span class="codicon codicon-search" aria-hidden="true"></span>
+        <input id="providerSearch" type="search" placeholder="Search providers or models" data-i18n-placeholder="searchAria" autocomplete="off">
+      </label>
+      <div id="providerList" class="provider-list" role="list" aria-busy="true"></div>
+    </section>
+
+    <footer class="app-footer">
+      <span id="platformFooter"></span>
+      <button id="openSettings" type="button" class="text-button" data-i18n="settings">Settings</button>
+    </footer>
+  </main>
+
+  <dialog id="settingsDialog" aria-labelledby="settingsTitle" aria-describedby="settingsSubtitle">
+    <div class="dialog-shell settings-shell">
+      <header class="dialog-header">
+        <div>
+          <h2 id="settingsTitle" data-i18n="settings">Settings</h2>
+          <p id="settingsSubtitle" data-i18n="settingsSubtitle">Tune ModelMux for your workspace.</p>
+        </div>
+        <button type="button" id="closeSettings" class="icon-button" aria-label="Close" title="Close" data-i18n-aria="close" data-i18n-title="close"><span class="codicon codicon-close" aria-hidden="true"></span></button>
+      </header>
+      <div class="dialog-body settings-body">
+        <section class="settings-group" aria-labelledby="languageTitle">
+          <h3 id="languageTitle" data-i18n="language">Language</h3>
+          <p data-i18n="languageNote">Choose the language used in this panel.</p>
+          <div id="languageControl" class="segmented-control" role="group" aria-label="Language" data-i18n-aria="language">
+            <button type="button" data-language="en">English</button>
+            <button type="button" data-language="zh-CN">中文</button>
+          </div>
+        </section>
+        <section class="settings-group" aria-labelledby="typographyTitle">
+          <h3 id="typographyTitle" data-i18n="typography">Typography</h3>
+          <p data-i18n="typographyNote">Use a readable typeface and scale for the sidebar.</p>
+          <label class="field"><span data-i18n="fontFamily">Font family</span>
+            <select id="fontFamilySelect">
+              <option value="default" data-i18n="fontDefault">VS Code default</option>
+              <option value="system" data-i18n="fontSystem">System UI</option>
+              <option value="monospace" data-i18n="fontMonospace">Monospace</option>
+            </select>
+          </label>
+          <div class="font-size-setting">
+            <div class="field-heading"><span data-i18n="fontSize">Font size</span><output id="fontSizeValue">13 px</output></div>
+            <div class="range-control">
+              <button id="fontDecrease" type="button" class="icon-button" title="Decrease font size" aria-label="Decrease font size" data-i18n-title="fontDecrease" data-i18n-aria="fontDecrease"><span class="codicon codicon-remove" aria-hidden="true"></span></button>
+              <input id="fontSizeRange" type="range" min="10" max="20" step="1" value="13" aria-label="Font size" data-i18n-aria="fontSize">
+              <button id="fontIncrease" type="button" class="icon-button" title="Increase font size" aria-label="Increase font size" data-i18n-title="fontIncrease" data-i18n-aria="fontIncrease"><span class="codicon codicon-add" aria-hidden="true"></span></button>
+            </div>
+          </div>
+          <div class="font-preview" role="status">
+            <span data-i18n="previewLabel">Preview</span>
+            <strong>ModelMux / gpt-5</strong>
+            <p data-i18n="previewText">Switch models without losing your original CLI configuration.</p>
+          </div>
+          <button type="button" id="useDefaultFont" class="text-button"><span class="codicon codicon-discard" aria-hidden="true"></span><span data-i18n="useDefaultFont">Use VS Code default font</span></button>
+        </section>
+      </div>
+      <footer class="dialog-actions">
+        <button type="button" id="resetAppearance" class="secondary" data-i18n="resetAppearance">Reset appearance</button>
+        <span class="spacer"></span>
+        <button type="button" id="openVsCodeSettings" class="secondary" data-i18n="openVsCodeSettings">VS Code settings</button>
+        <button type="button" id="doneSettings" class="primary" data-i18n="done">Done</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="profileDialog" aria-labelledby="dialogTitle" aria-describedby="dialogSubtitle">
+    <form id="profileForm" class="dialog-shell" novalidate>
+      <header class="dialog-header">
+        <div>
+          <h2 id="dialogTitle">Add provider</h2>
+          <p id="dialogSubtitle">Secrets remain outside exported profile files.</p>
+        </div>
+        <button type="button" id="closeDialog" class="icon-button" aria-label="Close" title="Close" data-i18n-aria="close" data-i18n-title="close"><span class="codicon codicon-close" aria-hidden="true"></span></button>
+      </header>
+      <div class="dialog-body">
+        <div id="profileErrorSummary" class="error-summary hidden" role="alert" tabindex="-1" aria-labelledby="profileErrorTitle">
+          <strong id="profileErrorTitle" data-i18n="fixErrors">Fix the following fields</strong>
+          <ul id="profileErrorList"></ul>
+        </div>
+        <input type="hidden" id="profileId">
+
+        <section class="form-section" aria-labelledby="basicsTitle">
+          <header><h3 id="basicsTitle" data-i18n="basicInfo">Basics</h3><p data-i18n="basicInfoNote">Choose a connection type and recognizable name.</p></header>
+          <div class="form-grid">
+            <label class="field"><span data-i18n="providerType">Provider type</span>
+              <select id="kind">
+                <option value="customResponses" data-i18n="kindCustomResponses">OpenAI Responses gateway</option>
+                <option value="customChat" data-i18n="kindCustomChat">OpenAI Chat Completions gateway</option>
+                <option value="customAnthropic" data-i18n="kindCustomAnthropic">Anthropic Messages gateway</option>
+                <option value="openai" data-i18n="kindOpenAi">Official OpenAI</option>
+                <option value="anthropic" data-i18n="kindAnthropic">Official Anthropic</option>
+                <option value="gemini" data-i18n="kindGemini">Official Google Gemini</option>
+                <option value="grok" data-i18n="kindGrok">Official xAI Grok</option>
+                <option value="bedrock">Amazon Bedrock</option>
+                <option value="ollama" data-i18n="kindOllama">Local Ollama</option>
+                <option value="lmstudio" data-i18n="kindLmStudio">Local LM Studio</option>
+              </select>
+            </label>
+            <label class="field"><span data-i18n="profileName">Profile name</span>
+              <input id="name" required placeholder="Example: Lab gateway" data-i18n-placeholder="profileNamePlaceholder" aria-errormessage="nameError">
+              <span id="nameError" class="field-error" data-field-error="name"></span>
+            </label>
+          </div>
+          <p id="connectionHint" class="connection-hint"></p>
+        </section>
+
+        <section id="customFields" class="form-section" aria-labelledby="connectionTitle">
+          <header><h3 id="connectionTitle" data-i18n="connectionAuth">Connection &amp; authentication</h3><p data-i18n="connectionAuthNote">Use SecretStorage, environment variables, or no authentication.</p></header>
+          <div class="form-grid">
+            <label class="field"><span>Provider ID</span>
+              <input id="providerId" placeholder="custom_proxy" aria-errormessage="providerIdError">
+              <span id="providerIdError" class="field-error" data-field-error="providerId"></span>
+            </label>
+            <label class="field"><span data-i18n="authMode">Authentication</span>
+              <select id="authMode">
+                <option value="secret" data-i18n="authSecret">SecretStorage / Windows compatibility</option>
+                <option value="env" data-i18n="authEnv">Bearer environment variable</option>
+                <option value="envHeaders" data-i18n="authEnvHeaders">Environment-variable headers</option>
+                <option value="none" data-i18n="authNone">No authentication</option>
+              </select>
+            </label>
+            <label class="field full"><span>Base URL</span>
+              <input id="baseUrl" type="url" placeholder="https://example.com/v1" aria-errormessage="baseUrlError">
+              <span id="baseUrlError" class="field-error" data-field-error="baseUrl"></span>
+              <small data-i18n="baseUrlNote">Usually ends at /v1; do not include the request path.</small>
+            </label>
+            <label id="apiKeyLabel" class="field full"><span>API Key</span>
+              <span class="input-with-action">
+                <input id="apiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved secret" data-i18n-placeholder="apiKeyPlaceholder" aria-errormessage="apiKeyError">
+                <button type="button" id="toggleApiKey" class="icon-button" aria-label="Show or hide API Key" title="Show or hide API Key" data-i18n-aria="toggleApiKey" data-i18n-title="toggleApiKey"><span class="codicon codicon-eye" aria-hidden="true"></span></button>
+              </span>
+              <span id="apiKeyError" class="field-error" data-field-error="apiKey"></span>
+              <small data-i18n="apiKeyNote">Stored in VS Code SecretStorage.</small>
+            </label>
+            <label id="envKeyLabel" class="field full hidden"><span data-i18n="envKey">API Key environment variable</span>
+              <input id="envKey" placeholder="CUSTOM_CODEX_API_KEY" aria-errormessage="envKeyError">
+              <span id="envKeyError" class="field-error" data-field-error="envKey"></span>
+              <small data-i18n="envKeyNote">The target CLI reads this variable from its launch environment.</small>
+            </label>
+            <label id="envKeyInstructionsLabel" class="field full hidden"><span data-i18n="envHint">Environment setup hint (optional)</span>
+              <input id="envKeyInstructions" placeholder="Set MODEL_SWITCH_API_KEY" data-i18n-placeholder="envHintPlaceholder">
+            </label>
+            <label class="checkbox-row danger-option full">
+              <input id="allowInsecureHttp" type="checkbox">
+              <span><span data-i18n="allowHttp">Allow remote HTTP (unsafe)</span><small data-i18n="allowHttpNote">Remote HTTP sends credentials in clear text.</small></span>
+            </label>
+            <label class="checkbox-row danger-option full">
+              <input id="allowInsecureModelDiscovery" type="checkbox">
+              <span><span data-i18n="ignoreTls">Ignore TLS errors for model discovery (unsafe)</span><small data-i18n="ignoreTlsNote">Only affects the plugin model-list request.</small></span>
+            </label>
+          </div>
+          <details class="advanced-details">
+            <summary data-i18n="advancedCompatibility">Advanced compatibility</summary>
+            <div class="form-grid advanced-grid">
+              <label class="field full"><span data-i18n="discoveryPath">Model discovery path</span>
+                <input id="modelDiscoveryPath" placeholder="/models">
+                <small data-i18n="discoveryPathNote">A relative path or full same-origin URL. Default: /models.</small>
+              </label>
+              <label class="field"><span data-i18n="requestRetries">HTTP request retries</span>
+                <input id="requestMaxRetries" type="number" min="0" max="20" value="0" aria-errormessage="requestMaxRetriesError">
+                <span id="requestMaxRetriesError" class="field-error" data-field-error="requestMaxRetries"></span>
+              </label>
+              <label class="field"><span data-i18n="streamRetries">Stream retries</span>
+                <input id="streamMaxRetries" type="number" min="0" max="20" value="2" aria-errormessage="streamMaxRetriesError">
+                <span id="streamMaxRetriesError" class="field-error" data-field-error="streamMaxRetries"></span>
+              </label>
+              <label class="field full"><span data-i18n="streamTimeout">Stream idle timeout (ms)</span>
+                <input id="streamIdleTimeoutMs" type="number" min="1000" max="3600000" value="300000" aria-errormessage="streamIdleTimeoutMsError">
+                <span id="streamIdleTimeoutMsError" class="field-error" data-field-error="streamIdleTimeoutMs"></span>
+              </label>
+              <label class="checkbox-row full"><input id="supportsWebsockets" type="checkbox"><span data-i18n="websocketSupport">Provider supports Responses WebSocket transport</span></label>
+              <label class="field full"><span data-i18n="queryParams">Query parameters JSON</span>
+                <textarea id="queryParams" rows="3" placeholder='{"api-version":"2025-04-01-preview"}' aria-errormessage="queryParamsError"></textarea>
+                <span id="queryParamsError" class="field-error" data-field-error="queryParams"></span>
+              </label>
+              <label class="field full"><span data-i18n="staticHeaders">Static headers JSON (no secrets)</span>
+                <textarea id="httpHeaders" rows="3" placeholder='{"X-Client":"modelmux"}' aria-errormessage="httpHeadersError"></textarea>
+                <span id="httpHeadersError" class="field-error" data-field-error="httpHeaders"></span>
+              </label>
+              <label class="field full"><span data-i18n="envHeaders">Environment-variable headers JSON</span>
+                <textarea id="envHttpHeaders" rows="3" placeholder='{"api-key":"AZURE_OPENAI_API_KEY"}' aria-errormessage="envHttpHeadersError"></textarea>
+                <span id="envHttpHeadersError" class="field-error" data-field-error="envHttpHeaders"></span>
+                <small data-i18n="envHeadersNote">Keys are HTTP headers; values are environment-variable names.</small>
+              </label>
+            </div>
+          </details>
+        </section>
+
+        <section id="bedrockFields" class="form-section hidden" aria-labelledby="awsTitle">
+          <header><h3 id="awsTitle" data-i18n="awsCredentials">AWS credentials</h3><p data-i18n="awsCredentialsNote">Uses the current system AWS credential chain.</p></header>
+          <div class="form-grid">
+            <label class="field"><span>AWS Region</span>
+              <input id="awsRegion" placeholder="us-east-1" aria-errormessage="awsRegionError">
+              <span id="awsRegionError" class="field-error" data-field-error="awsRegion"></span>
+            </label>
+            <label class="field"><span data-i18n="awsProfile">AWS Profile (optional)</span><input id="awsProfile" placeholder="default"></label>
+          </div>
+        </section>
+
+        <section class="form-section" aria-labelledby="modelsTitle">
+          <header><h3 id="modelsTitle" data-i18n="models">Models</h3><p data-i18n="modelsNote">Choose a default model or synchronize from /models.</p></header>
+          <div class="form-grid">
+            <label class="field full"><span data-i18n="modelId">Model ID</span>
+              <input id="selectedModel" list="modelSuggestions" required placeholder="Enter a model ID accepted by the target CLI" data-i18n-placeholder="modelIdPlaceholder" aria-errormessage="selectedModelError">
+              <datalist id="modelSuggestions"></datalist>
+              <span id="selectedModelError" class="field-error" data-field-error="selectedModel"></span>
+            </label>
+            <label class="field full"><span data-i18n="availableModels">Available models</span><textarea id="models" rows="5" placeholder="One model ID per line" data-i18n-placeholder="availableModelsPlaceholder"></textarea></label>
+          </div>
+          <div id="fetchRow" class="inline-actions" role="status">
+            <button type="button" id="fetchModels" class="secondary"><span class="codicon codicon-cloud-download" aria-hidden="true"></span><span data-i18n="fetchModels">Fetch /models</span></button>
+            <span id="fetchResult" class="muted"></span>
+          </div>
+        </section>
+
+        <section class="form-section" aria-labelledby="policyTitle">
+          <header><h3 id="policyTitle" data-i18n="compatibilityPolicy">Compatibility policy</h3><p data-i18n="compatibilityPolicyNote">Controls whether reasoning effort is written.</p></header>
+          <label class="field"><span data-i18n="reasoningPolicy">Reasoning effort policy</span>
+            <select id="reasoningPolicy">
+              <option value="auto" data-i18n="reasoningAuto">Auto</option>
+              <option value="none" data-i18n="reasoningNone">Do not write reasoning_effort</option>
+              <option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option>
+            </select>
+          </label>
+        </section>
+      </div>
+      <footer class="dialog-actions">
+        <button type="button" id="cancelDialog" class="secondary" data-i18n="cancel">Cancel</button>
+        <button type="submit" id="saveProfile" class="primary" data-i18n="saveProvider">Save provider</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="diagnosticsDialog" aria-labelledby="diagnosticsTitle" aria-describedby="diagnosticsSummary">
+    <div class="dialog-shell compact-dialog">
+      <header class="dialog-header">
+        <div><h2 id="diagnosticsTitle" data-i18n="diagnostics">Diagnostics</h2><p id="diagnosticsSummary" role="status"></p></div>
+        <button type="button" id="closeDiagnostics" class="icon-button" aria-label="Close" title="Close" data-i18n-aria="close" data-i18n-title="close"><span class="codicon codicon-close" aria-hidden="true"></span></button>
+      </header>
+      <div id="diagnosticsBody" class="dialog-body diagnostics-body" aria-busy="false"></div>
+      <footer class="dialog-actions">
+        <button type="button" id="refreshDiagnostics" class="secondary"><span class="codicon codicon-refresh" aria-hidden="true"></span><span data-i18n="runAgain">Run again</span></button>
+        <span class="spacer"></span>
+        <button type="button" id="showDiagnosticsReport" class="secondary"><span class="codicon codicon-output" aria-hidden="true"></span><span data-i18n="openReport">Open report</span></button>
+        <button type="button" id="doneDiagnostics" class="primary" data-i18n="done">Done</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog id="importPreviewDialog" aria-labelledby="importPreviewTitle" aria-describedby="importPreviewSummary">
+    <div class="dialog-shell compact-dialog">
+      <header class="dialog-header">
+        <div><h2 id="importPreviewTitle" data-i18n="importPreview">Import preview</h2><p id="importPreviewSummary" role="status"></p></div>
+        <button type="button" id="closeImportPreview" class="icon-button" aria-label="Close" title="Close" data-i18n-aria="close" data-i18n-title="close"><span class="codicon codicon-close" aria-hidden="true"></span></button>
+      </header>
+      <div class="dialog-body">
+        <div id="importWarning" class="notice warning hidden" role="alert"></div>
+        <label class="field import-strategy"><span data-i18n="conflictStrategy">Conflict strategy</span>
+          <select id="importStrategy">
+            <option value="skip" data-i18n="skipConflicts">Skip conflicting providers</option>
+            <option value="replace" data-i18n="replaceConflicts">Replace conflicting providers</option>
+          </select>
+        </label>
+        <ul id="importPreviewList" class="preview-list"></ul>
+      </div>
+      <footer class="dialog-actions">
+        <button type="button" id="cancelImport" class="secondary" data-i18n="cancel">Cancel</button>
+        <button type="button" id="commitImport" class="primary" data-i18n="importProfiles">Import profiles</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script nonce="{{NONCE}}" src="{{SCRIPT_URI}}"></script>
+</body>
+</html>

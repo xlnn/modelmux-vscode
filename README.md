@@ -1,4 +1,4 @@
-# ModelMux: AI CLI Model Manager 1.1.2
+# ModelMux: AI CLI Model Manager 1.2.0
 
 [中文说明](#中文说明)
 
@@ -20,16 +20,16 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 - Adjust the dashboard font size from `10px` to `20px` in the ModelMux Settings panel.
 - Restore the VS Code default font or reset the complete appearance configuration with one action.
 
-## What's New in 1.1.2
+## What's New in 1.2.0
 
-- Renamed and redesigned the extension as **ModelMux**.
-- Added a dedicated appearance and language settings interface.
-- Moved all font-size controls out of the dashboard header and into Settings.
-- Added English and Simplified Chinese dashboard localization with English as the default.
-- Added VS Code default, system UI, and monospace font options.
-- Added new monochrome Activity Bar and color Marketplace icons.
-- Added responsive safeguards for narrow sidebars at all supported font sizes.
-- Kept the existing command and configuration IDs so local profiles and settings remain compatible.
+- Treat `codexConfigSwitcher.approvalPolicy` and `codexConfigSwitcher.sandboxMode` as machine-scoped settings and restrict them in untrusted workspaces through the extension manifest.
+- Fail Windows private-file writes when the current account cannot be identified or the requested ACL cannot be applied and verified; incomplete private files are removed.
+- Serialize provider-state mutations so concurrent dashboard and command actions do not overwrite one another.
+- Add Anthropic Messages gateway compatibility for OpenCode.
+- Keep the dashboard compact for sidebar use, with a single CLI selector, status banner, provider action menus, and Command Palette intents that focus the requested workflow.
+- Preview provider activation and restore changes in the VS Code Diff Editor before writing, and inspect structured per-CLI diagnostics in the dashboard.
+- Validate imports before applying them, preview new and conflicting providers, and choose whether conflicts are skipped or replaced.
+- Run the smoke suite and Node 20 bundle build under Node 22 CI on Ubuntu, Windows, and macOS.
 
 ## CLI Support Matrix
 
@@ -43,14 +43,14 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 | OpenClaw | OpenAI, Anthropic, Google, xAI, Ollama | Responses, Chat, Anthropic Messages | `~/.openclaw/openclaw.json` |
 | Hermes | OpenAI, Anthropic, Google, xAI, LM Studio | Responses, Chat, Anthropic Messages | `~/.hermes/config.yaml` |
 
-Provider cards show whether a profile is compatible with the currently selected CLI. Incompatible profiles remain editable but cannot be applied to the wrong configuration format. Codex custom gateways must support the OpenAI Responses API; a Chat Completions-only endpoint cannot be used directly by Codex.
+Provider rows show whether a profile is compatible with the currently selected CLI. Incompatible profiles remain editable but cannot be applied to the wrong configuration format. Codex custom gateways must support the OpenAI Responses API; a Chat Completions-only endpoint cannot be used directly by Codex.
 
 ## Installation
 
 1. Open the VS Code Extensions view.
 2. Open the `...` menu in the upper-right corner.
 3. Select **Install from VSIX...**.
-4. Select `modelmux-1.1.2.vsix`.
+4. Select `modelmux-1.2.0.vsix`.
 5. Run `Developer: Reload Window`.
 
 For Remote-SSH, WSL, Dev Containers, or Codespaces, install ModelMux in the corresponding remote extension host. ModelMux only changes CLI configuration files in the environment where the extension is running.
@@ -71,13 +71,15 @@ The dashboard supports:
 - Synchronizing models from a custom `/models` endpoint.
 - Restoring the selected CLI's original configuration.
 - Opening the selected CLI configuration file.
-- Running environment and credential diagnostics.
-- Importing and exporting provider profiles.
+- Previewing provider activation or restore changes in the VS Code Diff Editor without modifying the target file.
+- Testing custom provider connectivity with the same timeout, same-origin credential, HTTP, and TLS rules used for model discovery.
+- Running per-CLI environment, credential, and managed-configuration diagnostics.
+- Importing and exporting provider profiles through dashboard actions or direct Command Palette commands.
 - Clearing API keys stored in SecretStorage.
 
 ## ModelMux Settings
 
-Open the gear button in the dashboard header or select **Settings** in the dashboard footer.
+Open **Tools > Settings** from the dashboard header, or select **Settings** in the dashboard footer.
 
 ### Language
 
@@ -94,6 +96,8 @@ Open the gear button in the dashboard header or select **Settings** in the dashb
 - **Use VS Code default font** restores only the font family.
 - **Reset appearance** restores the default font family and `13px` font size.
 
+The Settings panel previews typography changes immediately. Provider actions can open the proposed activation configuration in the VS Code Diff Editor without changing the target file. The Tools menu can similarly preview the original configuration before restore. Diagnostic checks are also available in a structured dashboard dialog and as a text report.
+
 ## Configuration Paths and Overrides
 
 - Codex supports `CODEX_HOME`.
@@ -104,6 +108,9 @@ Open the gear button in the dashboard header or select **Settings** in the dashb
 - Hermes supports `HERMES_HOME`; its Windows default is `%LOCALAPPDATA%\hermes\config.yaml`.
 
 ## Credential Safety
+
+- `codexConfigSwitcher.approvalPolicy` and `codexConfigSwitcher.sandboxMode` are machine-scoped. The manifest lists both as restricted configurations in untrusted workspaces; VS Code controls whether users may change those restricted values in that workspace.
+- On Windows, ModelMux aborts private-file writes if it cannot apply and verify the requested current-user ACL, and removes an incomplete file created by that write attempt.
 
 ### SecretStorage
 
@@ -155,35 +162,46 @@ After importing profiles on another device, re-enter API keys or configure the r
 ## Development and Packaging
 
 ```bash
-npm install
+npm ci
 npm run check
 npm test
+npm run build
 npm run package
 ```
 
-The package command generates:
+Development and CI use Node.js 22 or newer. The extension bundle remains targeted at Node 20 for the VS Code extension host.
+
+The package command reads the package version dynamically and generates:
 
 ```text
-modelmux-1.1.2.vsix
+modelmux-1.2.0.vsix
 ```
 
-The test suite covers branding and Marketplace metadata, appearance settings, default-English localization, Codex configuration generation, all six additional CLI adapters, concurrent target state, isolated restore, credential handling, model discovery security, and the bundled extension entry point.
+The smoke suite covers manifest metadata, appearance settings and localization, export redaction, Webview CSP/DOM/accessibility boundaries, import conflict handling, Codex configuration generation, all six additional CLI adapters, concurrent target state, isolated restore, credential handling, model discovery security, and the bundled extension entry point. GitHub CI runs `npm ci`, `npm run check`, `npm test`, and `npm run build` on Ubuntu, Windows, and macOS.
 
 ## Publishing
 
 Local Marketplace publishing requires a Personal Access Token for the `cherry-local` publisher:
 
 ```bash
-npx vsce publish --packagePath modelmux-1.1.2.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.2.0.vsix -p "$VSCE_PAT"
 ```
 
 The repository is configured as `xlnn/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages the VSIX, attaches it to a GitHub Release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
+
+## Extension Identity
+
+- Product brand: **ModelMux**; manifest display name: **ModelMux: AI CLI Model Manager**.
+- Package name: `codex-config-switcher`; publisher: `cherry-local`.
+- Marketplace extension ID: `cherry-local.codex-config-switcher`. This is unchanged from ModelMux 1.1.2, so 1.1.2 installations can upgrade in place.
+- Builds previously installed under `cherry-local.codex-config-switcher` have a different VS Code extension identity. Export profiles from that installation and import them into the current extension; SecretStorage credentials must be entered again.
+- Source repository: `xlnn/modelmux-vscode`. The repository name is not the Marketplace extension ID.
+- Existing command and setting IDs keep the `codexConfigSwitcher` prefix for compatibility.
 
 ## Notes
 
 - New configuration normally applies to newly started CLI sessions.
 - SecretStorage values do not migrate between devices through profile exports.
-- The Marketplace extension ID is `cherry-local.codex-config-switcher`. The product name shown to users is ModelMux.
 - ModelMux is not affiliated with OpenAI, Anthropic, Google, xAI, Amazon, OpenCode, OpenClaw, Nous Research, Ollama, or LM Studio.
 
 ## License
@@ -194,11 +212,21 @@ MIT
 
 ## 中文说明
 
-### ModelMux：AI CLI 模型管理器 1.1.2
+### ModelMux：AI CLI 模型管理器 1.2.0
 
 一个面向 **Windows、macOS、Linux、WSL、Remote-SSH、Dev Container 与 GitHub Codespaces** 的 VS Code 图形化 AI CLI 配置管理插件。
 
 插件可独立切换 Codex、Claude Code、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 的默认 Provider/模型，支持原配置备份、恢复、外部改动检测、环境自检以及不含密钥的 Provider 迁移。
+
+## 1.2.0 安全与工作流
+
+- `codexConfigSwitcher.approvalPolicy` 与 `codexConfigSwitcher.sandboxMode` 改为机器级设置，并在扩展清单中列为不受信任工作区的受限配置。
+- Windows 私有文件写入现在要求成功应用并验证当前用户 ACL；无法确认账户或 ACL 时中止写入，并清理该次写入产生的不完整文件。
+- Provider 状态变更统一串行处理，避免面板与命令并发操作互相覆盖；OpenCode 新增 Anthropic Messages 网关兼容。
+- 保持适合侧边栏的紧凑界面，常用操作可从面板按钮直达，环境自检与 Provider 导入/导出也可从命令面板直接调用。
+- Provider 与恢复操作可先在 VS Code Diff Editor 中预览拟写入内容，不修改真实 CLI 配置；环境自检既可在面板中结构化查看，也可打开文本报告。
+- 导入前会校验文件并预览新增项与冲突项，再选择跳过或替换冲突 Provider。
+- Node.js 22 CI 在 Ubuntu、Windows、macOS 上运行检查、冒烟测试与保持 `node20` 目标的打包构建。
 
 ## 1.1.0 ModelMux
 
@@ -229,7 +257,7 @@ MIT
 | OpenClaw | OpenAI、Anthropic、Google、xAI、Ollama | Responses、Chat、Anthropic Messages | `~/.openclaw/openclaw.json` |
 | Hermes | OpenAI、Anthropic、Google、xAI、LM Studio | Responses、Chat、Anthropic Messages | `~/.hermes/config.yaml` |
 
-Provider 卡片会根据当前 CLI 和协议显示是否兼容。不兼容组合保持可编辑，但不会允许写入错误格式。Codex 仍要求 Responses API；只有 `/chat/completions` 的网关不能直接用于 Codex。
+Provider 列表项会根据当前 CLI 和协议显示是否兼容。不兼容组合保持可编辑，但不会允许写入错误格式。Codex 仍要求 Responses API；只有 `/chat/completions` 的网关不能直接用于 Codex。
 
 ## 安装
 
@@ -254,11 +282,14 @@ Provider 卡片会根据当前 CLI 和协议显示是否兼容。不兼容组合
 
 ## 凭据安全
 
+- `codexConfigSwitcher.approvalPolicy` 与 `codexConfigSwitcher.sandboxMode` 的 scope 为 `machine`。扩展清单将两项列为不受信任工作区的受限配置；是否允许在该工作区修改受限值由 VS Code 控制。
+- Windows 私有文件无法应用并验证当前用户 ACL 时，ModelMux 会中止写入，并删除该次写入产生的不完整文件。
+
 ### SecretStorage 模式
 
 Codex API Key 长期保存在 VS Code SecretStorage 中，不写入导出 JSON。Linux/macOS 使用仅当前用户可读的临时令牌文件。Windows 为兼容部分 Codex 版本，会在启用期间将 Bearer Token 写入受 ACL 保护的托管 `config.toml`；恢复原配置后该文件被替换或删除。
 
-- Windows：位于 `%TEMP%\codex-model-profile-manager\...`，并尝试收紧 ACL；
+- Windows：位于 `%TEMP%\codex-model-profile-manager\...`，并强制应用及验证当前用户 ACL；
 - Linux：优先位于 `/run/user/<uid>`，否则回退到用户临时目录；
 - macOS：位于当前用户的 `$TMPDIR`。
 
@@ -295,12 +326,16 @@ ModelMux: Open dashboard
 - 在七个 CLI 之间切换并查看各自接管状态；
 - 在设置界面选择中英文、字体族和 `10–20px` 字号；
 - 一键恢复 VS Code 默认字体或全部默认外观；
-- 从自定义 `/models` 地址同步模型；
-- 导入、导出 Provider 配置；
-- 恢复原始配置；
-- 运行环境自检；
+- 从自定义 `/models` 地址同步模型并测试连接；
+- 在 VS Code Diff Editor 中预览 Provider 启用或恢复的拟写入内容；
+- 在面板内查看结构化环境自检，或从命令面板打开文本报告；
+- 导入前预览新增与冲突 Provider，并选择跳过或替换；
+- 通过面板或命令面板导入、导出不含密钥的 Provider 配置；
+- 恢复当前 CLI 的原始配置；
 - 打开当前 CLI 的用户配置；
 - 清除 SecretStorage 中的 API Key。
+
+设置面板会即时预览字体外观调整。Provider 启用和恢复操作可先在 VS Code Diff Editor 中查看拟写入内容，预览过程不会修改目标文件。环境自检可在面板中结构化查看，也可打开文本报告。
 
 ## 跨平台迁移
 
@@ -318,24 +353,28 @@ ModelMux: Open dashboard
 ## 开发与测试
 
 ```bash
-npm install
+npm ci
 npm run check
 npm test
+npm run build
 npm run package
 ```
+
+开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.2.0.vsix`。
 
 ## 发布
 
 本地发布需要 Marketplace Publisher `cherry-local` 的 Personal Access Token：
 
 ```bash
-npx vsce publish --packagePath modelmux-1.1.2.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.2.0.vsix -p "$VSCE_PAT"
 ```
 
-仓库包含 `.github/workflows/release.yml`。在 GitHub Repository Secret 中配置 `VSCE_PAT` 后，发布 GitHub Release 会自动运行测试、附加 VSIX，并上传到 VS Code Marketplace。
+仓库包含 `.github/workflows/release.yml`。发布流程使用 Node.js 22，并执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`，之后打包、附加 VSIX；配置 `VSCE_PAT` 后再上传到 VS Code Marketplace。
 
-测试覆盖：
+GitHub CI 在 Ubuntu、Windows、macOS 上使用 Node.js 22 执行安装、语法检查、冒烟测试和 bundle 构建。现有测试覆盖：
 
+- Provider 导出脱敏、导入冲突处理与 Webview CSP、DOM 安全、可访问性结构；
 - Linux 配置、权限、Token helper、符号链接防护和环境自检；
 - Windows EncodedCommand 生成；
 - macOS/Linux Unix helper 配置；
@@ -344,6 +383,15 @@ npx vsce publish --packagePath modelmux-1.1.2.vsix -p "$VSCE_PAT"
 - Claude、Gemini、Grok、OpenCode、OpenClaw 与 Hermes 配置生成；
 - 多目标同时启用及独立恢复；
 - 查询参数、请求头、重试与超时设置。
+
+## 扩展身份
+
+- 产品品牌：**ModelMux**；manifest 展示名称：**ModelMux: AI CLI Model Manager**。
+- 包名：`codex-config-switcher`；Publisher：`cherry-local`。
+- Marketplace 扩展 ID：`cherry-local.codex-config-switcher`，与 ModelMux 1.1.2 保持一致，因此 1.1.2 可原地升级。
+- 早期安装在 `cherry-local.codex-config-switcher` 身份下的构建属于另一个 VS Code 扩展 ID；需要从旧扩展导出 Provider 后导入当前扩展，并重新填写 SecretStorage 密钥。
+- 源码仓库：`xlnn/modelmux-vscode`；仓库名不是 Marketplace 扩展 ID。
+- 命令与设置 ID 继续使用 `codexConfigSwitcher` 前缀，以保持兼容。
 
 ## 注意事项
 

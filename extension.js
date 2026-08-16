@@ -13,6 +13,7 @@ const { URL } = require('url');
 const JSON5 = require('json5');
 const jsonc = require('jsonc-parser');
 const YAML = require('yaml');
+const PACKAGE_MANIFEST = require('./package.json');
 
 const execFileAsync = promisify(childProcess.execFile);
 
@@ -29,7 +30,7 @@ const ORIGINAL_STATE_FILE = 'config.toml.original-state.json';
 const PROFILE_EXPORT_FORMAT = 'cli-model-profile-export';
 const LEGACY_PROFILE_EXPORT_FORMAT = 'codex-model-profile-export';
 const RESERVED_PROVIDER_IDS = new Set(['openai', 'ollama', 'lmstudio', 'amazon-bedrock']);
-const EXTENSION_VERSION = '1.1.0';
+const EXTENSION_VERSION = PACKAGE_MANIFEST.version;
 const CUSTOM_KINDS = new Set(['customResponses', 'customChat', 'customAnthropic']);
 const TARGET_IDS = ['codex', 'claude', 'gemini', 'grok', 'opencode', 'openclaw', 'hermes'];
 const TARGET_LABELS = {
@@ -41,9 +42,13 @@ const TARGET_LABELS = {
   openclaw: 'OpenClaw',
   hermes: 'Hermes'
 };
+const TARGET_EXECUTABLES = {
+  codex: 'codex', claude: 'claude', gemini: 'gemini', grok: 'grok',
+  opencode: 'opencode', openclaw: 'openclaw', hermes: 'hermes'
+};
 const targetMutationQueues = new Map();
-const profileMutationQueues = new Map();
 let activeStateMutationQueue = Promise.resolve();
+let profileStateMutationQueue = Promise.resolve();
 let dashboardProvider;
 
 function expandEnvironmentVariables(value) {
@@ -228,17 +233,10 @@ async function withTargetMutation(targetId, task) {
 }
 
 async function withProfileMutation(profileId, task) {
-  const key = String(profileId || 'new');
-  const previous = profileMutationQueues.get(key) || Promise.resolve();
-  let release;
-  const current = new Promise(resolve => { release = resolve; });
-  profileMutationQueues.set(key, current);
-  await previous.catch(() => {});
-  try { return await task(); }
-  finally {
-    release();
-    if (profileMutationQueues.get(key) === current) profileMutationQueues.delete(key);
-  }
+  void profileId;
+  const operation = profileStateMutationQueue.catch(() => {}).then(task);
+  profileStateMutationQueue = operation.then(() => undefined, () => undefined);
+  return operation;
 }
 
 function isCustomProfile(profile) {
@@ -264,7 +262,7 @@ function targetCompatibility(targetId, profile) {
     claude: ['customAnthropic', 'anthropic'],
     gemini: ['gemini'],
     grok: ['grok'],
-    opencode: ['customChat', 'openai', 'anthropic', 'gemini', 'grok', 'ollama'],
+    opencode: ['customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'ollama'],
     openclaw: ['customResponses', 'customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'ollama'],
     hermes: ['customResponses', 'customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'lmstudio']
   };
@@ -388,6 +386,7 @@ function parseJsonMap(value, fieldName) {
   if (typeof value === 'object' && !Array.isArray(value)) return normalizeStringMap(value);
   const text = String(value).trim();
   if (!text) return {};
+  if (Buffer.byteLength(text, 'utf8') > 65536) throw new Error(`${fieldName}超过 64 KB 限制。`);
   let parsed;
   try { parsed = JSON.parse(text); } catch (error) {
     throw new Error(uiText(`${fieldName} must be a valid JSON object: ${error.message || error}`, `${fieldName}必须是有效的 JSON 对象：${error.message || error}`));
@@ -396,6 +395,21 @@ function parseJsonMap(value, fieldName) {
     throw new Error(uiText(`${fieldName} must be a JSON object.`, `${fieldName}必须是 JSON 对象。`));
   }
   return normalizeStringMap(parsed);
+}
+
+function isSensitiveName(value) {
+  const normalized = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return /(?:authorization|proxyauthorization|apikey|accesskey|accesskeyid|accesskeysecret|accesstoken|bearertoken|authtoken|secrettoken|clientsecret|password|passwd|credential|signature|cookie|setcookie|sessionid|privatekey)/.test(normalized);
+}
+
+function assertNoSensitiveStaticValues(map, fieldName) {
+  const sensitive = Object.keys(normalizeStringMap(map)).filter(isSensitiveName);
+  if (sensitive.length) {
+    throw new Error(uiText(
+      `${fieldName} contains credential-like keys (${sensitive.join(', ')}). Use SecretStorage or environment-variable headers instead.`,
+      `${fieldName}包含疑似凭据字段（${sensitive.join(', ')}）。请改用 SecretStorage 或环境变量请求头。`
+    ));
+  }
 }
 
 function clampInteger(value, fallback, min, max) {
@@ -606,6 +620,19 @@ function windowsAccountName() {
   try { return os.userInfo().username; } catch { return ''; }
 }
 
+async function verifyWindowsPrivateAcl(target) {
+  const account = windowsAccountName();
+  if (!account) throw new Error(`无法确定当前 Windows 账户，不能验证私有 ACL：${target}`);
+  const { stdout } = await execFileAsync('icacls.exe', [target], { windowsHide: true, timeout: 10000 });
+  const acl = String(stdout || '');
+  if (!acl.toLowerCase().includes(`${account.toLowerCase()}:`)) {
+    throw new Error(`Windows ACL 未包含当前账户：${target}`);
+  }
+  const broadWrite = /(?:^|[\\\s])(?:Everyone|Authenticated Users|BUILTIN\\Users|\*S-1-1-0|\*S-1-5-11|\*S-1-5-32-545):[^\r\n]*\((?:F|M|W|WD|AD|DC)\)/im;
+  if (broadWrite.test(acl)) throw new Error(`Windows ACL 仍允许宽泛账户写入：${target}`);
+  return acl;
+}
+
 async function applyPrivatePermissions(target, isDirectory = false) {
   if (process.platform !== 'win32') {
     await fs.promises.chmod(target, isDirectory ? 0o700 : 0o600);
@@ -613,18 +640,16 @@ async function applyPrivatePermissions(target, isDirectory = false) {
   }
 
   const account = windowsAccountName();
-  if (!account) return;
+  if (!account) throw new Error(`无法确定当前 Windows 账户，不能保护文件：${target}`);
   const permission = isDirectory ? '(OI)(CI)F' : 'F';
-  try {
-    await execFileAsync('icacls.exe', [
-      target,
-      '/inheritance:r',
-      '/grant:r', `${account}:${permission}`,
-      '/grant:r', '*S-1-5-18:F'
-    ], { windowsHide: true, timeout: 10000 });
-  } catch (error) {
-    console.warn(`无法收紧 Windows ACL：${target}`, error && error.message ? error.message : error);
-  }
+  await execFileAsync('icacls.exe', [
+    target,
+    '/inheritance:r',
+    '/remove:g', '*S-1-1-0', '*S-1-5-11', '*S-1-5-32-545',
+    '/grant:r', `${account}:${permission}`,
+    '/grant:r', '*S-1-5-18:F'
+  ], { windowsHide: true, timeout: 10000 });
+  await verifyWindowsPrivateAcl(target);
 }
 
 async function ensureDirectory(dir, privateOnWindows = false) {
@@ -645,8 +670,13 @@ async function writePrivateFile(file, content, privateParentOnWindows = false) {
     } catch (error) {
       if (error && error.code !== 'ENOENT') throw error;
     }
-    await fs.promises.writeFile(file, content, { encoding: 'utf8', mode: 0o600 });
-    await applyPrivatePermissions(file, false);
+    try {
+      await fs.promises.writeFile(file, content, { encoding: 'utf8', mode: 0o600 });
+      await applyPrivatePermissions(file, false);
+    } catch (error) {
+      await fs.promises.rm(file, { force: true }).catch(() => {});
+      throw error;
+    }
     return;
   }
 
@@ -670,6 +700,7 @@ async function writeAtomic(file, content) {
   const temp = path.join(dir, `.${baseName}.tmp-${process.pid}-${Date.now()}`);
   const displaced = path.join(dir, `.${baseName}.previous-${process.pid}-${Date.now()}`);
   let movedExisting = false;
+  let installedReplacement = false;
   try {
     await writePrivateFile(temp, content);
     if (process.platform === 'win32' && await fileExists(file)) {
@@ -680,6 +711,7 @@ async function writeAtomic(file, content) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
         await fs.promises.rename(temp, file);
+        installedReplacement = true;
         renameError = undefined;
         break;
       } catch (error) {
@@ -692,7 +724,8 @@ async function writeAtomic(file, content) {
     await applyPrivatePermissions(file, false);
     if (movedExisting) await fs.promises.rm(displaced, { force: true });
   } catch (error) {
-    if (movedExisting && !(await fileExists(file)) && await fileExists(displaced)) {
+    if (installedReplacement && process.platform === 'win32') await fs.promises.rm(file, { force: true }).catch(() => {});
+    if (movedExisting && await fileExists(displaced)) {
       await fs.promises.rename(displaced, file).catch(() => {});
     }
     throw error;
@@ -733,7 +766,7 @@ async function readOriginalState(files) {
 
 async function writeOriginalState(files, existed, extra = {}) {
   const current = await readOriginalState(files) || {};
-  await writePrivateFile(files.originalState, JSON.stringify({
+  await writeAtomic(files.originalState, JSON.stringify({
     ...current,
     version: files.targetId && files.targetId !== 'codex' ? 2 : 1,
     targetId: files.targetId || current.targetId,
@@ -756,8 +789,13 @@ async function ensureOriginalBackup(files) {
     throw new Error('当前 config.toml 已由切换器管理，但原始状态记录不存在。请先手动恢复原配置，避免覆盖。');
   }
   if (!(await fileExists(files.backup))) {
-    await fs.promises.copyFile(files.config, files.backup, fs.constants.COPYFILE_EXCL);
-    await applyPrivatePermissions(files.backup, false);
+    try {
+      await fs.promises.copyFile(files.config, files.backup, fs.constants.COPYFILE_EXCL);
+      await applyPrivatePermissions(files.backup, false);
+    } catch (error) {
+      await fs.promises.rm(files.backup, { force: true }).catch(() => {});
+      throw error;
+    }
   }
   await writeOriginalState(files, true);
   return true;
@@ -765,6 +803,76 @@ async function ensureOriginalBackup(files) {
 
 function contentHash(content) {
   return crypto.createHash('sha256').update(String(content || ''), 'utf8').digest('hex');
+}
+
+async function getTargetManagementState(context, targetId, files = pathsForTarget(targetId)) {
+  const normalizedTarget = normalizeTargetId(targetId);
+  const active = getActiveTargets(context)[normalizedTarget];
+  const originalState = await readOriginalState(files);
+  const configExists = await fileExists(files.config);
+  const backupExists = await fileExists(files.backup);
+  const markerManaged = normalizedTarget === 'codex' && configExists
+    ? await isManagedConfig(files.config)
+    : false;
+  const hasManagedRecord = Boolean(originalState && originalState.lastAppliedHash);
+
+  let status = 'original';
+  let currentHash;
+  if (configExists && hasManagedRecord) {
+    currentHash = contentHash(await fs.promises.readFile(files.config, 'utf8'));
+  }
+  if ((active || markerManaged || hasManagedRecord) && (!active || !originalState || !hasManagedRecord || !configExists)) {
+    status = 'managed-orphaned';
+  } else if (hasManagedRecord && currentHash !== originalState.lastAppliedHash) {
+    status = 'managed-drifted';
+  } else if (hasManagedRecord && originalState.existed && !backupExists) {
+    status = 'backup-missing';
+  } else if (active && hasManagedRecord) {
+    status = 'managed-clean';
+  }
+
+  return {
+    status,
+    active,
+    originalState,
+    configExists,
+    backupExists,
+    currentHash,
+    managed: status !== 'original',
+    canRestore: Boolean(originalState && (!originalState.existed || backupExists)),
+    canApply: status === 'original' || status === 'managed-clean'
+  };
+}
+
+async function assertManagedContentUnchanged(context, targetId, files, allowConfirmation = false) {
+  const management = await getTargetManagementState(context, targetId, files);
+  const uncertain = management.status === 'managed-drifted'
+    || (management.status === 'managed-orphaned' && management.configExists);
+  if (!uncertain) return management;
+  if (!allowConfirmation) {
+    throw new Error(`${targetLabel(targetId)} 配置在 ModelMux 写入后已被其它程序修改，或缺少可验证的托管记录。请先预览或恢复，避免覆盖外部改动。`);
+  }
+  const continueLabel = uiText('Restore anyway', '仍然恢复');
+  const answer = await vscode.window.showWarningMessage(
+    uiText(
+      `${targetLabel(targetId)} configuration changed outside ModelMux or its integrity record is incomplete. Restoring will overwrite the current file.`,
+      `${targetLabel(targetId)} 配置已被其它程序修改，或完整性记录不完整。继续恢复会覆盖当前文件。`
+    ),
+    { modal: true }, continueLabel
+  );
+  if (answer !== continueLabel) return undefined;
+  return management;
+}
+
+async function assertTargetCanApply(context, targetId, files) {
+  const management = await assertManagedContentUnchanged(context, targetId, files, false);
+  if (management.status === 'managed-orphaned') {
+    throw new Error(`${targetLabel(targetId)} 的托管配置或活动记录不完整。请先运行诊断并恢复原配置。`);
+  }
+  if (management.status === 'backup-missing') {
+    throw new Error(`${targetLabel(targetId)} 的原始备份缺失。为避免不可逆覆盖，ModelMux 已停止写入。`);
+  }
+  return management;
 }
 
 async function originalContentForTarget(files) {
@@ -936,23 +1044,14 @@ function buildTargetConfig(targetId, profile, model, original) {
 }
 
 async function isTargetManaged(context, targetId, files = pathsForTarget(targetId)) {
-  if (targetId === 'codex') return isManagedConfig(files.config);
-  const active = getActiveTargets(context)[targetId];
-  const state = await readOriginalState(files);
-  return Boolean(active && state && state.lastAppliedHash && await fileExists(files.config));
+  return (await getTargetManagementState(context, targetId, files)).managed;
 }
 
 async function activateExternalTarget(context, targetId, profile, model) {
   const compatibility = targetCompatibility(targetId, profile);
   if (!compatibility.supported) throw new Error(compatibility.reason);
   const files = pathsForTarget(targetId);
-  const stateBefore = await readOriginalState(files);
-  if (stateBefore && stateBefore.lastAppliedHash && await fileExists(files.config)) {
-    const current = await fs.promises.readFile(files.config, 'utf8');
-    if (contentHash(current) !== stateBefore.lastAppliedHash) {
-      throw new Error(`${targetLabel(targetId)} 配置在插件写入后已被其它程序修改。请先恢复或处理外部改动，避免覆盖。`);
-    }
-  }
+  await assertTargetCanApply(context, targetId, files);
   await ensureOriginalBackup(files);
   const original = await originalContentForTarget(files);
   const content = buildTargetConfig(targetId, profile, model, original);
@@ -970,18 +1069,10 @@ async function activateExternalTarget(context, targetId, profile, model) {
 
 async function restoreExternalTarget(context, targetId) {
   const files = pathsForTarget(targetId);
-  const state = await readOriginalState(files);
+  const management = await assertManagedContentUnchanged(context, targetId, files, true);
+  if (!management) return false;
+  const state = management.originalState;
   if (!state) throw new Error(`尚未记录 ${targetLabel(targetId)} 的原始配置。`);
-  if (state.lastAppliedHash && await fileExists(files.config)) {
-    const current = await fs.promises.readFile(files.config, 'utf8');
-    if (contentHash(current) !== state.lastAppliedHash) {
-      const answer = await vscode.window.showWarningMessage(
-        `${targetLabel(targetId)} 配置已被其它程序修改。继续恢复会覆盖这些改动。`,
-        { modal: true }, '仍然恢复'
-      );
-      if (answer !== '仍然恢复') return false;
-    }
-  }
   if (state.existed === false) await fs.promises.rm(files.config, { force: true });
   else {
     if (!(await fileExists(files.backup))) throw new Error(`找不到备份文件：${files.backup}`);
@@ -1433,7 +1524,9 @@ async function addProfile(context, statusBar) {
   else if (['anthropic', 'gemini', 'grok'].includes(type.value)) profile = await createNativeProfile(type.value);
   else profile = await createLocalProfile(type.value);
   if (!profile) return;
-  await saveProfiles(context, [...getProfiles(context), profile]);
+  await withProfileMutation(profile.id, async () => {
+    await saveProfiles(context, [...getProfiles(context), profile]);
+  });
   const activateNow = await vscode.window.showInformationMessage(`已保存配置“${profile.name}”。`, '立即启用', '稍后');
   if (activateNow === '立即启用') await activateProfileForTarget(context, getSelectedTargetId(context), profile.id, statusBar);
 }
@@ -1528,9 +1621,14 @@ async function refreshModels(context) {
       cancellable: false
     }, () => fetchModelsForProfile(context, profile));
 
-    profile.models = models;
-    if (!models.includes(profile.selectedModel)) profile.selectedModel = models[0];
-    await saveProfiles(context, getProfiles(context).map(item => item.id === profile.id ? profile : item));
+    await withProfileMutation(profile.id, async () => {
+      const current = getProfiles(context);
+      const latest = current.find(item => item.id === profile.id);
+      if (!latest) throw new Error('Provider 已被删除。');
+      latest.models = models;
+      if (!models.includes(latest.selectedModel)) latest.selectedModel = models[0];
+      await saveProfiles(context, current.map(item => item.id === latest.id ? latest : item));
+    });
     await vscode.window.showInformationMessage(`已获取 ${models.length} 个模型。`);
   } catch (error) {
     await vscode.window.showErrorMessage(`刷新模型列表失败：${error.message || error}`);
@@ -1603,6 +1701,7 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
 
   const files = pathsForCurrentUser();
   try {
+    await assertTargetCanApply(context, 'codex', files);
     const createdBackup = await ensureOriginalBackup(files);
 
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
@@ -1625,11 +1724,19 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
 
     profile.selectedModel = model;
     await saveProfiles(context, profiles.map(item => item.id === profile.id ? profile : item));
-    await writeAtomic(files.config, buildManagedConfig(profile, model, files.token, resolvedSecret));
+    const managedContent = buildManagedConfig(profile, model, files.token, resolvedSecret);
+    await writeAtomic(files.config, managedContent);
+    const originalState = await readOriginalState(files);
+    await writeOriginalState(files, originalState ? originalState.existed : false, {
+      lastAppliedHash: contentHash(managedContent),
+      profileId: profile.id,
+      model,
+      automaticRefreshDisabled: undefined,
+      updatedAt: new Date().toISOString()
+    });
     await updateActiveTarget(context, 'codex', { profileId: profile.id, model });
     await updateStatusBar(context, statusBar, files);
 
-    const originalState = await readOriginalState(files);
     const backupText = createdBackup
       ? originalState && originalState.existed ? `原配置已备份到 ${files.backup}。` : '原先没有 config.toml，已记录空白原始状态。'
       : '已有原始状态记录，未重复覆盖。';
@@ -1663,14 +1770,18 @@ async function restoreOriginal(context, statusBar, options = {}) {
   if (!(await ensureSupportedPlatform())) return false;
   const files = pathsForCurrentUser();
   try {
-    const state = await readOriginalState(files);
-    if (state && state.existed === false) {
-      if (await isManagedConfig(files.config)) await fs.promises.rm(files.config, { force: true });
+    const management = await assertManagedContentUnchanged(context, 'codex', files, true);
+    if (!management) return false;
+    const state = management.originalState;
+    if (!state) throw new Error('尚未记录 Codex 的原始配置。');
+    if (state.existed === false) {
+      await fs.promises.rm(files.config, { force: true });
     } else {
       if (!(await fileExists(files.backup))) throw new Error(`找不到备份文件：${files.backup}`);
       await writeAtomic(files.config, await fs.promises.readFile(files.backup, 'utf8'));
     }
     await removeRuntimeToken(files.token);
+    await writeOriginalState(files, state.existed, { lastAppliedHash: undefined, profileId: undefined, model: undefined, restoredAt: new Date().toISOString() });
     await updateActiveTarget(context, 'codex', undefined);
     await updateStatusBar(context, statusBar, files);
     if (options.offerReload !== false) await offerReload('已恢复原始 Codex 状态，并删除运行时临时密钥。');
@@ -1826,20 +1937,25 @@ async function showStatus(context) {
 
 async function updateStatusBar(context, statusBar, files = pathsForTarget(getSelectedTargetId(context))) {
   const targetId = files.targetId || 'codex';
-  const managed = await isTargetManaged(context, targetId, files);
+  const management = await getTargetManagementState(context, targetId, files);
   const profiles = getProfiles(context);
   const activeRecord = getActiveTargets(context)[targetId];
   const active = profiles.find(item => activeRecord && item.id === activeRecord.profileId);
   const label = targetLabel(targetId);
 
-  if (managed && active) {
+  if (management.status === 'managed-clean' && active) {
     statusBar.text = `$(server) ${label}: ${activeRecord.model || active.selectedModel || active.name}`;
     statusBar.tooltip = `${active.name}\n${providerDescription(active)}\n${uiText(`Click to manage ${label} model configuration.`, `点击管理 ${label} 的模型配置。`)}`;
-  } else if (managed) {
-    statusBar.text = `$(warning) ${label}: ${uiText('Managed', '已管理')}`;
+  } else if (management.managed) {
+    const stateLabels = {
+      'managed-drifted': uiText('Changed outside ModelMux', '检测到外部修改'),
+      'backup-missing': uiText('Backup missing', '原始备份缺失'),
+      'managed-orphaned': uiText('State incomplete', '托管状态不完整')
+    };
+    statusBar.text = `$(warning) ${label}: ${stateLabels[management.status] || uiText('Needs attention', '需要检查')}`;
     statusBar.tooltip = uiText(
-      `${path.basename(files.config)} is managed by ModelMux, but its active profile record is missing.`,
-      `${path.basename(files.config)} 由 ModelMux 管理，但没有找到活动配置记录。`
+      `${path.basename(files.config)} needs attention. Open ModelMux diagnostics before applying another provider.`,
+      `${path.basename(files.config)} 需要检查。再次写入 Provider 前请打开 ModelMux 诊断。`
     );
   } else {
     statusBar.text = `$(shield) ${label}: ${uiText('Original', '原配置')}`;
@@ -1849,6 +1965,11 @@ async function updateStatusBar(context, statusBar, files = pathsForTarget(getSel
     );
   }
   statusBar.show();
+}
+
+function canAutomaticallyRefreshManagedConfig(management) {
+  return Boolean(management && management.status === 'managed-clean'
+    && management.originalState && !management.originalState.automaticRefreshDisabled);
 }
 
 async function recreateRuntimeTokenIfNeeded(context, statusBar) {
@@ -1863,9 +1984,29 @@ async function recreateRuntimeTokenIfNeeded(context, statusBar) {
     return;
   }
 
-  const activeId = context.globalState.get(ACTIVE_PROFILE_KEY);
-  const profile = getProfiles(context).find(item => item.id === activeId);
-  if (!profile || !profile.selectedModel) {
+  const activeRecord = getActiveTargets(context).codex;
+  const profile = getProfiles(context).find(item => activeRecord && item.id === activeRecord.profileId);
+  const activeModel = activeRecord && activeRecord.model;
+  if (!profile || !activeModel) {
+    await updateStatusBar(context, statusBar, files);
+    return;
+  }
+
+  let originalState = await readOriginalState(files);
+  if (originalState && !originalState.lastAppliedHash && await fileExists(files.config)) {
+    const current = await fs.promises.readFile(files.config, 'utf8');
+    await writeOriginalState(files, originalState.existed, {
+      lastAppliedHash: contentHash(current),
+      profileId: profile.id,
+      model: activeModel,
+      automaticRefreshDisabled: true,
+      migratedAt: new Date().toISOString()
+    });
+    originalState = await readOriginalState(files);
+  }
+
+  const management = await getTargetManagementState(context, 'codex', files);
+  if (!canAutomaticallyRefreshManagedConfig(management)) {
     await updateStatusBar(context, statusBar, files);
     return;
   }
@@ -1887,12 +2028,18 @@ async function recreateRuntimeTokenIfNeeded(context, statusBar) {
     await removeRuntimeToken(files.token);
   }
 
-  // Runtime directories can change across macOS logins and Linux fallback sessions.
-  // On Windows, rebuild the ACL-restricted config with the compatibility bearer token.
   try {
-    const desired = buildManagedConfig(profile, profile.selectedModel, files.token, resolvedSecret);
+    const desired = buildManagedConfig(profile, activeModel, files.token, resolvedSecret);
     const current = await readConfigText(files.config);
-    if (current !== desired) await writeAtomic(files.config, desired);
+    if (current !== desired) {
+      await writeAtomic(files.config, desired);
+      await writeOriginalState(files, originalState.existed, {
+        lastAppliedHash: contentHash(desired),
+        profileId: profile.id,
+        model: activeModel,
+        updatedAt: new Date().toISOString()
+      });
+    }
   } catch (error) {
     console.error('Failed to refresh managed Codex config:', error);
   }
@@ -1900,19 +2047,58 @@ async function recreateRuntimeTokenIfNeeded(context, statusBar) {
   await updateStatusBar(context, statusBar, files);
 }
 
+function executableCandidates(name) {
+  if (process.platform === 'win32') return [`${name}.exe`, `${name}.cmd`, `${name}.bat`, name];
+  return [name];
+}
+
+function findExecutable(name) {
+  const pathValue = String(process.env.PATH || '');
+  for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
+    for (const candidate of executableCandidates(name)) {
+      const file = path.join(directory.replace(/^"|"$/g, ''), candidate);
+      try {
+        const stat = fs.statSync(file);
+        if (stat.isFile()) return file;
+      } catch {}
+    }
+  }
+  return undefined;
+}
+
+async function executableVersion(targetId) {
+  const executable = findExecutable(TARGET_EXECUTABLES[targetId]);
+  if (!executable) return { found: false, detail: `${TARGET_EXECUTABLES[targetId]} not found on PATH` };
+  try {
+    const { stdout, stderr } = await execFileAsync(executable, ['--version'], { windowsHide: true, timeout: 5000 });
+    const version = String(stdout || stderr || '').trim().split(/\r?\n/)[0].slice(0, 240);
+    return { found: true, detail: version ? `${executable} · ${version}` : executable };
+  } catch (error) {
+    return { found: true, detail: `${executable} · ${String(error.message || error).slice(0, 240)}` };
+  }
+}
+
 async function collectDiagnostics(context) {
   const files = pathsForCurrentUser();
   const checks = [];
-  const add = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail: String(detail || '') });
+  const add = (name, ok, detail, severity = 'error') => checks.push({ name, ok: Boolean(ok), detail: String(detail || ''), severity });
   const environment = runtimeEnvironmentInfo();
   add('受支持的平台', ['linux', 'win32', 'darwin'].includes(process.platform), environment.platformLabel);
   add('运行架构', ['x64', 'arm64', 'ia32', 'arm'].includes(process.arch), process.arch);
+  const cli = await executableVersion('codex');
+  add('CLI 可执行文件', cli.found, cli.detail, 'warning');
 
-  try {
-    await ensureDirectory(files.codexDir, false);
-    await fs.promises.access(files.codexDir, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
-    add('Codex 配置目录可读写', true, files.codexDir);
-  } catch (error) { add('Codex 配置目录可读写', false, `${files.codexDir}：${error.message || error}`); }
+  if (process.platform === 'win32') {
+    try {
+      await fs.promises.access(files.codexDir, fs.constants.R_OK | fs.constants.W_OK);
+      add('Codex 配置目录可读写', true, files.codexDir);
+    } catch (error) { add('Codex 配置目录可读写', false, `${files.codexDir}：${error.message || error}`); }
+  } else {
+    try {
+      await fs.promises.access(files.codexDir, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
+      add('Codex 配置目录可读写', true, files.codexDir);
+    } catch (error) { add('Codex 配置目录可读写', false, `${files.codexDir}：${error.message || error}`); }
+  }
 
   const managed = await isManagedConfig(files.config);
   const originalState = await readOriginalState(files);
@@ -1936,19 +2122,22 @@ async function collectDiagnostics(context) {
 
   const tokenDir = path.dirname(files.token);
   try {
-    await ensureDirectory(tokenDir, true);
     const stat = await fs.promises.stat(tokenDir);
-    let privateEnough = true;
+    let privateEnough = stat.isDirectory();
     if (process.platform !== 'win32') {
-      privateEnough = (stat.mode & 0o077) === 0;
+      privateEnough = privateEnough && (stat.mode & 0o077) === 0;
       if (typeof process.getuid === 'function') privateEnough = privateEnough && stat.uid === process.getuid();
     }
     add('运行时密钥目录', privateEnough, `${tokenDir}${privateEnough ? '' : '（权限或所有者需要检查）'}`);
-  } catch (error) { add('运行时密钥目录', false, `${tokenDir}：${error.message || error}`); }
+  } catch (error) {
+    const required = Boolean(managed && process.platform !== 'win32');
+    add('运行时密钥目录', !required && error.code === 'ENOENT', required ? `${tokenDir}：${error.message || error}` : '当前认证方式尚未创建运行时密钥目录');
+  }
 
-  const activeId = context.globalState.get(ACTIVE_PROFILE_KEY);
+  const activeRecord = getActiveTargets(context).codex;
+  const activeId = activeRecord && activeRecord.profileId;
   const profile = getProfiles(context).find(item => item.id === activeId);
-  add('活动 Provider 记录', !managed || Boolean(profile), profile ? `${profile.name} / ${profile.selectedModel || '未选择模型'}` : managed ? '配置受管理但记录缺失' : '当前无需活动记录');
+  add('活动 Provider 记录', !managed || Boolean(profile), profile ? `${profile.name} / ${activeRecord.model || profile.selectedModel || '未选择模型'}` : managed ? '配置受管理但记录缺失' : '当前无需活动记录');
   const authMode = profile && profile.authMode === 'bearer' ? 'secret' : profile && profile.authMode;
   const tokenExists = await fileExists(files.token);
   const tokenRequired = process.platform !== 'win32' && managed && profile && profile.kind === 'customResponses' && authMode === 'secret';
@@ -1977,6 +2166,10 @@ async function collectDiagnostics(context) {
       add('SecretStorage 密钥', Boolean(secret), secret ? '已保存（内容未显示）' : '缺失');
       if (process.platform === 'win32') {
         add('Windows 兼容认证', Boolean(secret) && configText.includes('experimental_bearer_token ='), '托管配置使用受 ACL 保护的 experimental_bearer_token');
+        try {
+          await verifyWindowsPrivateAcl(files.config);
+          add('Windows 配置 ACL', true, 'config.toml 仅允许当前账户与 SYSTEM 访问');
+        } catch (error) { add('Windows 配置 ACL', false, error.message || error); }
       } else if (secret && tokenExists) {
         try {
           const runtime = await fs.promises.readFile(files.token, 'utf8');
@@ -2005,8 +2198,9 @@ async function collectDiagnostics(context) {
     add('HTTP 请求重试', configText.includes(`request_max_retries = ${clampInteger(profile.requestMaxRetries, 0, 0, 20)}`), `request_max_retries = ${clampInteger(profile.requestMaxRetries, 0, 0, 20)}`);
   }
 
-  const failed = checks.filter(item => !item.ok).length;
-  return { checks, failed, passed: checks.length - failed, files, platform: environment.platformLabel };
+  const failed = checks.filter(item => !item.ok && item.severity !== 'warning').length;
+  const warned = checks.filter(item => !item.ok && item.severity === 'warning').length;
+  return { checks, failed, warned, passed: checks.length - failed - warned, files, platform: environment.platformLabel };
 }
 
 async function collectTargetDiagnostics(context, targetId) {
@@ -2014,9 +2208,10 @@ async function collectTargetDiagnostics(context, targetId) {
   if (normalizedTarget === 'codex') return collectDiagnostics(context);
   const files = pathsForTarget(normalizedTarget);
   const checks = [];
-  const add = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail: String(detail || '') });
+  const add = (name, ok, detail, severity = 'error') => checks.push({ name, ok: Boolean(ok), detail: String(detail || ''), severity });
+  const cli = await executableVersion(normalizedTarget);
+  add('CLI 可执行文件', cli.found, cli.detail, 'warning');
   try {
-    await ensureDirectory(path.dirname(files.config), false);
     await fs.promises.access(path.dirname(files.config), fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
     add('配置目录可读写', true, path.dirname(files.config));
   } catch (error) { add('配置目录可读写', false, error.message || error); }
@@ -2040,8 +2235,9 @@ async function collectTargetDiagnostics(context, targetId) {
     const current = await fs.promises.readFile(files.config, 'utf8');
     add('托管配置完整性', contentHash(current) === state.lastAppliedHash, contentHash(current) === state.lastAppliedHash ? '配置与最后写入内容一致' : '配置已被其它程序修改');
   }
-  const failed = checks.filter(item => !item.ok).length;
-  return { checks, failed, passed: checks.length - failed, files, platform: runtimeEnvironmentInfo().platformLabel, targetId: normalizedTarget };
+  const failed = checks.filter(item => !item.ok && item.severity !== 'warning').length;
+  const warned = checks.filter(item => !item.ok && item.severity === 'warning').length;
+  return { checks, failed, warned, passed: checks.length - failed - warned, files, platform: runtimeEnvironmentInfo().platformLabel, targetId: normalizedTarget };
 }
 
 async function showDiagnostics(context, targetId = getSelectedTargetId(context)) {
@@ -2049,12 +2245,12 @@ async function showDiagnostics(context, targetId = getSelectedTargetId(context))
   const result = await collectTargetDiagnostics(context, normalizedTarget);
   const english = readGlobalSettings().uiLanguage !== 'zh-CN';
   const diagnosticNames = {
-    '受支持的平台': 'Supported platform', '运行架构': 'Runtime architecture', 'Codex 配置目录可读写': 'Codex configuration directory is writable',
+    '受支持的平台': 'Supported platform', '运行架构': 'Runtime architecture', 'CLI 可执行文件': 'CLI executable', 'Codex 配置目录可读写': 'Codex configuration directory is writable',
     '原始状态记录': 'Original state record', 'config.toml 状态': 'config.toml status', '原始备份': 'Original backup',
     'Unix Token helper 可执行': 'Unix token helper is executable', '运行时密钥目录': 'Runtime credential directory',
     '活动 Provider 记录': 'Active provider record', '运行时密钥文件': 'Runtime credential file', '运行时密钥权限': 'Runtime credential permissions',
     'Responses 协议': 'Responses protocol', 'SecretStorage 密钥': 'SecretStorage credential', 'Windows 兼容认证': 'Windows compatibility authentication',
-    '运行时密钥一致性': 'Runtime credential consistency', 'Token helper 输出': 'Token helper output', '配置中的 Token 路径': 'Token path in configuration',
+    'Windows 配置 ACL': 'Windows configuration ACL', '运行时密钥一致性': 'Runtime credential consistency', 'Token helper 输出': 'Token helper output', '配置中的 Token 路径': 'Token path in configuration',
     'Token helper 配置': 'Token helper configuration', '环境变量名称': 'Environment-variable name', '环境变量当前可见': 'Environment variable visibility',
     '环境变量请求头映射': 'Environment header mapping', '请求头环境变量当前可见': 'Header environment-variable visibility', 'HTTP 请求重试': 'HTTP request retries',
     '配置目录可读写': 'Configuration directory is writable', '配置路径': 'Configuration path', '当前配置文件': 'Current configuration file',
@@ -2063,7 +2259,10 @@ async function showDiagnostics(context, targetId = getSelectedTargetId(context))
   const lines = [
     uiText(`ModelMux ${EXTENSION_VERSION} · ${targetLabel(normalizedTarget)} diagnostics`, `ModelMux ${EXTENSION_VERSION} · ${targetLabel(normalizedTarget)} 环境自检`),
     uiText(`Runtime: ${result.platform}`, `运行环境：${result.platform}`),
-    uiText(`Result: ${result.passed} passed, ${result.failed} need attention`, `结果：${result.passed} 项通过，${result.failed} 项需要检查`),
+    uiText(
+      `Result: ${result.passed} passed, ${result.warned || 0} warnings, ${result.failed} require action`,
+      `结果：${result.passed} 项通过，${result.warned || 0} 项警告，${result.failed} 项需要处理`
+    ),
     '',
     ...result.checks.map(item => {
       const name = english ? (diagnosticNames[item.name] || item.name) : item.name;
@@ -2079,10 +2278,78 @@ async function showDiagnostics(context, targetId = getSelectedTargetId(context))
   return result;
 }
 
+const EXPORTABLE_PROFILE_FIELDS = [
+  'id', 'kind', 'name', 'providerId', 'providerName', 'baseUrl', 'authMode', 'envKey',
+  'envKeyInstructions', 'allowInsecureHttp', 'allowInsecureModelDiscovery', 'modelDiscoveryPath',
+  'requestMaxRetries', 'streamMaxRetries', 'streamIdleTimeoutMs', 'supportsWebsockets',
+  'queryParams', 'httpHeaders', 'envHttpHeaders', 'awsRegion', 'awsProfile', 'selectedModel',
+  'models', 'reasoningPolicy'
+];
+
+function withoutSensitiveEntries(map) {
+  return Object.fromEntries(Object.entries(normalizeStringMap(map)).filter(([key]) => !isSensitiveName(key)));
+}
+
 function exportableProfile(profile) {
-  const copy = { ...profile };
-  delete copy.hasSecret; delete copy.requiresSecret; delete copy.active; delete copy.envReady;
+  const copy = {};
+  for (const field of EXPORTABLE_PROFILE_FIELDS) {
+    if (profile[field] !== undefined) copy[field] = profile[field];
+  }
+  if (copy.queryParams) copy.queryParams = withoutSensitiveEntries(copy.queryParams);
+  if (copy.httpHeaders) copy.httpHeaders = withoutSensitiveEntries(copy.httpHeaders);
   return copy;
+}
+
+function parseImportPayload(parsed) {
+  if (!parsed || ![PROFILE_EXPORT_FORMAT, LEGACY_PROFILE_EXPORT_FORMAT].includes(parsed.format) || !Array.isArray(parsed.profiles)) {
+    throw new Error(uiText('This is not a supported ModelMux provider export file.', '不是受支持的 ModelMux Provider 导出文件。'));
+  }
+  if (parsed.profiles.length > 500) throw new Error(uiText('The import contains more than 500 providers.', '导入文件包含超过 500 个 Provider。'));
+  return parsed.profiles;
+}
+
+function createImportPlan(current, rawProfiles) {
+  const existingById = new Map(current.map(item => [item.id, item]));
+  const entries = rawProfiles.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`Provider #${index + 1} 不是有效对象。`);
+    const requestedId = typeof item.id === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(item.id) ? item.id : undefined;
+    const existing = requestedId ? existingById.get(requestedId) : undefined;
+    const sanitized = { ...item };
+    if (sanitized.queryParams) sanitized.queryParams = withoutSensitiveEntries(parseJsonMap(sanitized.queryParams, 'Query parameters'));
+    if (sanitized.httpHeaders) sanitized.httpHeaders = withoutSensitiveEntries(parseJsonMap(sanitized.httpHeaders, 'Static headers'));
+    const profile = normalizeProfileFromGui(sanitized, existing);
+    if (requestedId) profile.id = requestedId;
+    return { status: existing ? 'conflict' : 'new', profile, existingId: existing && existing.id };
+  });
+  return {
+    entries,
+    added: entries.filter(item => item.status === 'new').length,
+    conflicts: entries.filter(item => item.status === 'conflict').length
+  };
+}
+
+function applyImportPlan(current, plan, strategy = 'skip') {
+  if (!['skip', 'replace'].includes(strategy)) throw new Error('不支持的导入冲突策略。');
+  const next = current.slice();
+  const indexById = new Map(next.map((item, index) => [item.id, index]));
+  let imported = 0;
+  let replaced = 0;
+  let skipped = 0;
+  for (const entry of plan.entries) {
+    if (entry.status === 'conflict') {
+      if (strategy === 'skip') { skipped += 1; continue; }
+      const index = indexById.get(entry.existingId);
+      next[index] = entry.profile;
+      replaced += 1;
+      continue;
+    }
+    let profile = entry.profile;
+    if (indexById.has(profile.id)) profile = { ...profile, id: createId() };
+    indexById.set(profile.id, next.length);
+    next.push(profile);
+    imported += 1;
+  }
+  return { profiles: next, imported, replaced, skipped };
 }
 
 async function exportProfiles(context) {
@@ -2092,32 +2359,178 @@ async function exportProfiles(context) {
     defaultUri: vscode.Uri.file(path.join(os.homedir(), `modelmux-profiles-${new Date().toISOString().slice(0, 10)}.json`)),
     filters: { JSON: ['json'] }, saveLabel: exportLabel
   });
-  if (!uri) return false;
-  const payload = { format: PROFILE_EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(), profiles: getProfiles(context).map(exportableProfile) };
+  if (!uri) return { status: 'cancelled' };
+  const payload = { format: PROFILE_EXPORT_FORMAT, version: 2, exportedAt: new Date().toISOString(), profiles: getProfiles(context).map(exportableProfile) };
   await vscode.workspace.fs.writeFile(uri, Buffer.from(JSON.stringify(payload, null, 2), 'utf8'));
-  await vscode.window.showInformationMessage(uiText(`Exported ${payload.profiles.length} providers without API keys.`, `已导出 ${payload.profiles.length} 个 Provider；文件不包含 API Key。`));
-  return true;
+  await vscode.window.showInformationMessage(uiText(`Exported ${payload.profiles.length} providers without credentials.`, `已导出 ${payload.profiles.length} 个 Provider；文件不包含凭据。`));
+  return { status: 'completed', count: payload.profiles.length };
+}
+
+async function pickImportPlan(context) {
+  const picked = await vscode.window.showOpenDialog({ title: uiText('Import ModelMux provider profiles', '导入 ModelMux Provider 配置'), canSelectMany: false, filters: { JSON: ['json'] }, openLabel: uiText('Import', '导入') });
+  if (!picked || !picked[0]) return { status: 'cancelled' };
+  const bytes = await vscode.workspace.fs.readFile(picked[0]);
+  if (bytes.byteLength > 2 * 1024 * 1024) throw new Error(uiText('The import file exceeds 2 MB.', '导入文件超过 2 MB 限制。'));
+  const parsed = JSON.parse(Buffer.from(bytes).toString('utf8'));
+  const plan = createImportPlan(getProfiles(context), parseImportPayload(parsed));
+  return { status: 'completed', plan, source: picked[0].fsPath || picked[0].path || '' };
+}
+
+async function commitImportPlan(context, plan, strategy) {
+  return withProfileMutation('import', async () => {
+    if (strategy === 'replace') {
+      const activeProfileIds = new Set(Object.values(getActiveTargets(context)).map(item => item && item.profileId).filter(Boolean));
+      const activeConflicts = plan.entries.filter(entry => entry.status === 'conflict' && activeProfileIds.has(entry.existingId));
+      if (activeConflicts.length) {
+        throw new Error(uiText(
+          'One or more conflicting providers are active. Restore or switch those CLI targets before replacing them.',
+          '一个或多个冲突 Provider 正在使用中。请先恢复或切换对应 CLI，再执行替换导入。'
+        ));
+      }
+    }
+    const result = applyImportPlan(getProfiles(context), plan, strategy);
+    await saveProfiles(context, result.profiles);
+    return { status: 'completed', imported: result.imported, replaced: result.replaced, skipped: result.skipped };
+  });
 }
 
 async function importProfiles(context) {
-  const picked = await vscode.window.showOpenDialog({ title: uiText('Import ModelMux provider profiles', '导入 ModelMux Provider 配置'), canSelectMany: false, filters: { JSON: ['json'] }, openLabel: uiText('Import', '导入') });
-  if (!picked || !picked[0]) return false;
-  const parsed = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(picked[0])).toString('utf8'));
-  if (!parsed || ![PROFILE_EXPORT_FORMAT, LEGACY_PROFILE_EXPORT_FORMAT].includes(parsed.format) || !Array.isArray(parsed.profiles)) throw new Error(uiText('This is not a supported ModelMux provider export file.', '不是受支持的 ModelMux Provider 导出文件。'));
-  const current = getProfiles(context);
-  const currentIds = new Set(current.map(item => item.id));
-  const imported = parsed.profiles.map(item => {
-    const normalized = normalizeProfileFromGui(item, undefined);
-    if (!normalized.id || currentIds.has(normalized.id)) normalized.id = createId();
-    currentIds.add(normalized.id);
-    return normalized;
-  });
-  await saveProfiles(context, [...current, ...imported]);
+  const selected = await pickImportPlan(context);
+  if (selected.status === 'cancelled') return selected;
+  let strategy = 'skip';
+  if (selected.plan.conflicts) {
+    const picked = await vscode.window.showQuickPick([
+      { label: uiText('Replace matching providers', '替换同 ID Provider'), value: 'replace' },
+      { label: uiText('Skip matching providers', '跳过同 ID Provider'), value: 'skip' }
+    ], { title: uiText(`${selected.plan.conflicts} provider conflicts found`, `发现 ${selected.plan.conflicts} 个 Provider 冲突`), ignoreFocusOut: true });
+    if (!picked) return { status: 'cancelled' };
+    strategy = picked.value;
+  }
+  const result = await commitImportPlan(context, selected.plan, strategy);
   await vscode.window.showInformationMessage(uiText(
-    `Imported ${imported.length} providers. Re-enter secrets or configure environment variables on this device.`,
-    `已导入 ${imported.length} 个 Provider。密钥不会随文件导入，需要在本机重新填写或设置环境变量。`
+    `Imported ${result.imported}, replaced ${result.replaced}, skipped ${result.skipped}. Configure credentials on this device.`,
+    `已新增 ${result.imported} 个、替换 ${result.replaced} 个、跳过 ${result.skipped} 个 Provider。请在本机配置凭据。`
   ));
-  return true;
+  return result;
+}
+
+async function testProviderConnection(context, profileId) {
+  const profile = getProfiles(context).find(item => item.id === profileId);
+  if (!profile) throw new Error(uiText('Provider not found.', '未找到 Provider。'));
+  if (!isCustomProfile(profile)) {
+    return { status: 'completed', native: true, latencyMs: 0, models: (profile.models || []).length };
+  }
+  const started = Date.now();
+  const models = await fetchModelsForProfile(context, profile);
+  return { status: 'completed', native: false, latencyMs: Date.now() - started, models: models.length };
+}
+
+function languageForTarget(targetId) {
+  if (targetId === 'codex' || targetId === 'grok') return 'toml';
+  if (targetId === 'hermes') return 'yaml';
+  return 'json';
+}
+
+function redactedPreviewSecret() {
+  return '<stored in protected configuration>';
+}
+
+async function proposedTargetContent(context, targetId, profile, model) {
+  const files = pathsForTarget(targetId);
+  if (targetId === 'codex') {
+    const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+    const placeholder = profile.kind === 'customResponses' && authMode === 'secret' && process.platform === 'win32'
+      ? redactedPreviewSecret() : undefined;
+    return buildManagedConfig(profile, model, files.token, placeholder);
+  }
+  const originalState = await readOriginalState(files);
+  const original = originalState
+    ? await originalContentForTarget(files)
+    : await readConfigText(files.config);
+  return buildTargetConfig(targetId, profile, model, original);
+}
+
+async function showContentDiff(targetId, before, after, title) {
+  const language = languageForTarget(targetId);
+  const beforeDocument = await vscode.workspace.openTextDocument({ language, content: before || '' });
+  const afterDocument = await vscode.workspace.openTextDocument({ language, content: after || '' });
+  await vscode.commands.executeCommand('vscode.diff', beforeDocument.uri, afterDocument.uri, title, { preview: true });
+}
+
+async function previewProfileConfig(context, targetId, profileId, modelOverride) {
+  const normalizedTarget = normalizeTargetId(targetId);
+  const profile = getProfiles(context).find(item => item.id === profileId);
+  if (!profile) throw new Error(uiText('Provider not found.', '未找到 Provider。'));
+  const compatibility = targetCompatibility(normalizedTarget, profile);
+  if (!compatibility.supported) throw new Error(compatibility.reason);
+  const model = String(modelOverride || profile.selectedModel || '').trim();
+  if (!model) throw new Error(uiText('Select a model before previewing.', '预览前请选择模型。'));
+  const files = pathsForTarget(normalizedTarget);
+  const before = await readConfigText(files.config);
+  const after = await proposedTargetContent(context, normalizedTarget, profile, model);
+  await showContentDiff(normalizedTarget, before, after, `ModelMux · ${targetLabel(normalizedTarget)} · ${profile.name}`);
+  return { status: 'completed' };
+}
+
+async function previewRestoreConfig(context, targetId) {
+  const normalizedTarget = normalizeTargetId(targetId);
+  const files = pathsForTarget(normalizedTarget);
+  const management = await getTargetManagementState(context, normalizedTarget, files);
+  if (!management.originalState) throw new Error(uiText('No original configuration has been recorded.', '尚未记录原始配置。'));
+  const before = await readConfigText(files.config);
+  const after = await originalContentForTarget(files);
+  await showContentDiff(normalizedTarget, before, after, `ModelMux · ${targetLabel(normalizedTarget)} · ${uiText('Restore preview', '恢复预览')}`);
+  return { status: 'completed' };
+}
+
+const WEBVIEW_COMMAND_SCHEMAS = {
+  ready: {}, refreshState: {},
+  updateUiSettings: { fontSize: 'optionalFontSize', language: 'optionalLanguage', fontFamily: 'optionalFontFamily' },
+  setFontSize: { fontSize: 'fontSize' }, saveProfile: { profile: 'profile', apiKey: 'optionalSecret' }, fetchModels: { profile: 'profile', apiKey: 'optionalSecret' },
+  activateProfile: { targetId: 'target', profileId: 'id', model: 'short' },
+  refreshModels: { profileId: 'id' }, deleteProfile: { profileId: 'id' }, clearApiKey: { profileId: 'id' },
+  selectTarget: { targetId: 'target' }, restoreOriginal: { targetId: 'target' }, previewRestore: { targetId: 'target' },
+  runDiagnostics: { targetId: 'target' }, getDiagnostics: { targetId: 'target' }, showDiagnosticsReport: { targetId: 'target' },
+  exportProfiles: {}, importProfiles: {}, selectImportFile: {}, commitImport: { importId: 'id', strategy: 'importStrategy' }, openConfig: { targetId: 'target' },
+  reloadWindow: {}, openSettings: {}, previewProfile: { targetId: 'target', profileId: 'id', model: 'short' },
+  testProvider: { profileId: 'id', targetId: 'target', model: 'short' }
+};
+
+function validateBoundedString(value, field, maximum = 512, required = false) {
+  if (value === undefined && !required) return;
+  if (typeof value !== 'string' || (required && !value.trim()) || value.length > maximum) {
+    throw new Error(`消息字段 ${field} 无效。`);
+  }
+}
+
+function validateWebviewMessage(message) {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('Webview 消息必须是对象。');
+  validateBoundedString(message.command, 'command', 64, true);
+  const schema = WEBVIEW_COMMAND_SCHEMAS[message.command];
+  if (!schema) throw new Error(uiText(`Unknown operation: ${message.command}`, `未知操作：${message.command}`));
+  validateBoundedString(message.requestId, 'requestId', 128, false);
+  for (const [field, type] of Object.entries(schema)) {
+    if (type === 'target') {
+      validateBoundedString(message[field], field, 32, true);
+      if (!TARGET_IDS.includes(message[field])) throw new Error(`消息字段 ${field} 不是有效 CLI 目标。`);
+    } else if (type === 'id') validateBoundedString(message[field], field, 128, true);
+    else if (type === 'short') validateBoundedString(message[field], field, 512, false);
+    else if (type === 'profile') {
+      if (!message[field] || typeof message[field] !== 'object' || Array.isArray(message[field])) throw new Error(`消息字段 ${field} 必须是对象。`);
+      if (Buffer.byteLength(JSON.stringify(message[field]), 'utf8') > 262144) throw new Error('Provider 表单超过 256 KB 限制。');
+    } else if (type === 'optionalSecret') validateBoundedString(message[field], field, 16384, false);
+    else if (type === 'fontSize' || type === 'optionalFontSize') {
+      if (message[field] === undefined && type === 'optionalFontSize') continue;
+      if (typeof message[field] !== 'number' || !Number.isFinite(message[field]) || message[field] < 10 || message[field] > 20) throw new Error(`消息字段 ${field} 无效。`);
+    } else if (type === 'optionalLanguage' && message[field] !== undefined && !['en', 'zh-CN'].includes(message[field])) throw new Error(`消息字段 ${field} 无效。`);
+    else if (type === 'optionalFontFamily' && message[field] !== undefined && !['default', 'system', 'monospace'].includes(message[field])) throw new Error(`消息字段 ${field} 无效。`);
+    else if (type === 'importStrategy' && !['skip', 'replace'].includes(message[field])) throw new Error(`消息字段 ${field} 无效。`);
+  }
+  const allowedFields = new Set(['command', 'requestId', ...Object.keys(schema)]);
+  for (const field of Object.keys(message)) {
+    if (!allowedFields.has(field)) throw new Error(`消息包含未声明字段 ${field}。`);
+  }
+  return message;
 }
 
 async function openMenu(context, statusBar) {
@@ -2263,6 +2676,8 @@ function normalizeProfileFromGui(input, existing) {
     profile.queryParams = parseJsonMap(input.queryParams, uiText('Query parameters', '查询参数'));
     profile.httpHeaders = parseJsonMap(input.httpHeaders, uiText('Static headers', '静态请求头'));
     profile.envHttpHeaders = parseJsonMap(input.envHttpHeaders, uiText('Environment-variable header map', '环境变量请求头映射'));
+    assertNoSensitiveStaticValues(profile.queryParams, uiText('Query parameters', '查询参数'));
+    assertNoSensitiveStaticValues(profile.httpHeaders, uiText('Static headers', '静态请求头'));
     for (const [header, envName] of Object.entries(profile.envHttpHeaders)) {
       if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)) throw new Error(uiText(`Invalid HTTP header name: ${header}`, `HTTP Header 名称无效：${header}`));
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) throw new Error(uiText(`Invalid environment-variable name for header “${header}”: ${envName}`, `请求头“${header}”对应的环境变量名无效：${envName}`));
@@ -2292,7 +2707,8 @@ async function getDashboardState(context) {
   const activeTargets = getActiveTargets(context);
   const activeRecord = activeTargets[selectedTargetId];
   const activeId = activeRecord && activeRecord.profileId;
-  const managed = await isTargetManaged(context, selectedTargetId, files);
+  const management = await getTargetManagementState(context, selectedTargetId, files);
+  const managed = management.managed;
   const items = [];
   for (const profile of profiles) {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
@@ -2307,7 +2723,8 @@ async function getDashboardState(context) {
           })()
         : undefined;
     const compatibility = targetCompatibility(selectedTargetId, profile);
-    const active = managed && profile.id === activeId;
+    const active = management.status === 'managed-clean' && profile.id === activeId;
+    const activeTargetId = await activeManagedTargetForProfile(context, profile.id);
     items.push({
       ...profile,
       selectedModel: active && activeRecord.model ? activeRecord.model : profile.selectedModel,
@@ -2315,12 +2732,17 @@ async function getDashboardState(context) {
       kindLabel: kindLabel(profile.kind),
       description: providerDescription(profile),
       active,
+      activeTargetId,
       requiresSecret,
       hasSecret,
       envReady,
       supported: compatibility.supported,
       unsupportedCode: compatibility.code,
-      unsupportedReason: compatibility.reason
+      unsupportedReason: compatibility.reason,
+      canEdit: !activeTargetId,
+      canDelete: !activeTargetId,
+      canClearSecret: !activeTargetId && requiresSecret,
+      canApply: compatibility.supported && management.canApply
     });
   }
   const env = runtimeEnvironmentInfo();
@@ -2329,12 +2751,14 @@ async function getDashboardState(context) {
   for (const id of TARGET_IDS) {
     const targetFiles = pathsForTarget(id);
     const targetActive = activeTargets[id];
+    const targetManagement = await getTargetManagementState(context, id, targetFiles);
     targets.push({
       id,
       label: targetLabel(id),
-      active: Boolean(targetActive && await isTargetManaged(context, id, targetFiles)),
+      active: targetManagement.status === 'managed-clean',
+      status: targetManagement.status,
       model: targetActive && targetActive.model,
-      configExists: await fileExists(targetFiles.config)
+      configExists: targetManagement.configExists
     });
   }
   return {
@@ -2343,14 +2767,32 @@ async function getDashboardState(context) {
     selectedTargetId,
     targetLabel: targetLabel(selectedTargetId),
     targets,
-    managed, activeId, activeProfile: items.find(item => item.active) || null, profiles: items, paths: files,
-    backupExists: await fileExists(files.backup), originalState,
-    runtimeTokenExists: Boolean(files.token && await fileExists(files.token)), configExists: await fileExists(files.config), settings: readGlobalSettings()
+    managed, managementStatus: management.status,
+    canRestore: management.canRestore,
+    canApply: management.canApply,
+    activeId, activeProfile: items.find(item => item.active) || null, profiles: items, paths: files,
+    backupExists: management.backupExists, originalState: management.originalState,
+    runtimeTokenExists: Boolean(files.token && await fileExists(files.token)), configExists: management.configExists, settings: readGlobalSettings()
   };
 }
 
 function nonceValue() {
   return crypto.randomBytes(24).toString('base64url');
+}
+
+function getDashboardHtml(webview, extensionUri) {
+  const nonce = nonceValue();
+  const mediaUri = (...parts) => webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', ...parts));
+  const replacements = {
+    '{{CSP_SOURCE}}': webview.cspSource,
+    '{{NONCE}}': nonce,
+    '{{STYLE_URI}}': String(mediaUri('dashboard.css')),
+    '{{CODICON_STYLE_URI}}': String(mediaUri('codicon.css')),
+    '{{SCRIPT_URI}}': String(mediaUri('dashboard.js'))
+  };
+  let html = fs.readFileSync(path.join(extensionUri.fsPath, 'media', 'dashboard.html'), 'utf8');
+  for (const [token, value] of Object.entries(replacements)) html = html.replaceAll(token, String(value));
+  return html;
 }
 
 class DashboardViewProvider {
@@ -2362,6 +2804,7 @@ class DashboardViewProvider {
     this.stateRevision = 0;
     this.ready = false;
     this.pendingAction = undefined;
+    this.importPlans = new Map();
   }
 
   resolveWebviewView(webviewView) {
@@ -2380,351 +2823,7 @@ class DashboardViewProvider {
   }
 
   getHtml(webview) {
-    const nonce = nonceValue();
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'dashboard.js'));
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'dashboard.css'));
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; form-action 'none'; img-src ${webview.cspSource} data:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-  <link rel="stylesheet" href="${styleUri}">
-  <title>ModelMux</title>
-</head>
-<body>
-  <main id="app">
-    <header class="app-header">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">M</div>
-        <div class="brand-copy">
-          <div class="title-row">
-            <h1>ModelMux</h1>
-            <span id="versionBadge" class="version-badge"></span>
-          </div>
-          <p data-i18n="brandTagline">One workspace for seven AI CLIs</p>
-        </div>
-      </div>
-      <div class="header-tools">
-        <button id="appearanceSettings" class="icon-button subtle" title="Settings" aria-label="Settings" data-i18n-title="settings" data-i18n-aria="settings">⚙</button>
-        <button id="addProvider" class="icon-button" title="Add provider" aria-label="Add provider" data-i18n-title="addProvider" data-i18n-aria="addProvider">＋</button>
-      </div>
-    </header>
-
-    <section class="target-switcher" aria-label="Select CLI" data-i18n-aria="selectCli">
-      <div class="target-switcher-copy">
-        <span class="target-kicker" data-i18n="currentTarget">Current target</span>
-        <strong id="targetName">Codex</strong>
-      </div>
-      <label class="target-select-wrap">
-        <span class="sr-only" data-i18n="cliTarget">CLI target</span>
-        <select id="targetSelect" aria-label="CLI target" data-i18n-aria="cliTarget">
-          <option value="codex">Codex</option>
-          <option value="claude">Claude Code</option>
-          <option value="gemini">Gemini CLI</option>
-          <option value="grok">Grok Build</option>
-          <option value="opencode">OpenCode</option>
-          <option value="openclaw">OpenClaw</option>
-          <option value="hermes">Hermes</option>
-        </select>
-      </label>
-    </section>
-    <div id="targetRail" class="target-rail" aria-label="CLI configuration status" data-i18n-aria="cliStatus"></div>
-
-    <section id="statusCard" class="status-card loading" aria-live="polite" data-i18n="loadingConfig">Reading configuration…</section>
-    <section id="metricGrid" class="metric-grid" aria-label="Configuration summary" data-i18n-aria="configSummary"></section>
-
-    <section class="action-grid" aria-label="Common actions" data-i18n-aria="commonActions">
-      <button id="restoreOriginal" class="action-button">
-        <span class="action-icon" aria-hidden="true">↩</span>
-        <span><span class="action-label" data-i18n="restoreOriginal">Restore original</span><span class="action-note" data-i18n="restoreOriginalNote">Return to the backed-up state</span></span>
-      </button>
-      <button id="openConfig" class="action-button">
-        <span class="action-icon" aria-hidden="true">≡</span>
-        <span><span class="action-label" data-i18n="openConfig">Open config</span><span class="action-note" data-i18n="openConfigNote">Inspect the current CLI file</span></span>
-      </button>
-      <button id="runDiagnostics" class="action-button">
-        <span class="action-icon" aria-hidden="true">✓</span>
-        <span><span class="action-label" data-i18n="diagnostics">Diagnostics</span><span class="action-note" data-i18n="diagnosticsNote">Check platform and credentials</span></span>
-      </button>
-      <button id="reloadWindow" class="action-button">
-        <span class="action-icon" aria-hidden="true">↻</span>
-        <span><span class="action-label" data-i18n="reload">Reload window</span><span class="action-note" data-i18n="reloadNote">Refresh the VS Code extension host</span></span>
-      </button>
-      <button id="exportProfiles" class="action-button">
-        <span class="action-icon" aria-hidden="true">⇩</span>
-        <span><span class="action-label" data-i18n="exportProfiles">Export profiles</span><span class="action-note" data-i18n="exportProfilesNote">Portable JSON without secrets</span></span>
-      </button>
-      <button id="importProfiles" class="action-button">
-        <span class="action-icon" aria-hidden="true">⇧</span>
-        <span><span class="action-label" data-i18n="importProfiles">Import profiles</span><span class="action-note" data-i18n="importProfilesNote">Merge providers from JSON</span></span>
-      </button>
-    </section>
-    <section id="compatibilityBar" class="compatibility-bar" aria-label="Platform compatibility" data-i18n-aria="platformCompatibility"></section>
-
-    <section class="section-heading">
-      <div>
-        <h2 data-i18n="providersAndModels">Providers & models</h2>
-        <span id="profileCount" class="muted"></span>
-      </div>
-      <div class="provider-tools">
-        <div class="search-box">
-          <span aria-hidden="true">⌕</span>
-          <input id="providerSearch" type="search" placeholder="Search" aria-label="Search providers or models" data-i18n-placeholder="search" data-i18n-aria="searchAria">
-        </div>
-        <button id="refreshState" class="link-button" title="Refresh status" aria-label="Refresh status" data-i18n-title="refreshStatus" data-i18n-aria="refreshStatus">↻</button>
-      </div>
-    </section>
-    <section id="providerList" class="provider-list"></section>
-
-    <footer class="app-footer">
-      <span id="platformFooter"></span>
-      <button id="openSettings" data-i18n="settings">Settings</button>
-    </footer>
-  </main>
-
-  <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle" aria-describedby="settingsSubtitle">
-    <div class="settings-shell">
-      <header class="dialog-header settings-header">
-        <div>
-          <span class="settings-kicker" data-i18n="appearance">Appearance</span>
-          <h2 id="settingsTitle" data-i18n="settings">Settings</h2>
-          <p id="settingsSubtitle" data-i18n="settingsSubtitle">Tune ModelMux for your workspace.</p>
-        </div>
-        <button type="button" id="closeSettings" class="icon-button subtle" aria-label="Close" data-i18n-aria="close">×</button>
-      </header>
-      <div class="settings-body">
-        <section class="settings-group">
-          <div class="settings-group-heading">
-            <div class="settings-glyph" aria-hidden="true">文</div>
-            <div><h3 data-i18n="language">Language</h3><p data-i18n="languageNote">Choose the language used in this panel.</p></div>
-          </div>
-          <div id="languageControl" class="segmented-control" role="group" aria-label="Language" data-i18n-aria="language">
-            <button type="button" data-language="en">English</button>
-            <button type="button" data-language="zh-CN">中文</button>
-          </div>
-        </section>
-
-        <section class="settings-group">
-          <div class="settings-group-heading">
-            <div class="settings-glyph font-glyph" aria-hidden="true">Aa</div>
-            <div><h3 data-i18n="typography">Typography</h3><p data-i18n="typographyNote">Use a readable typeface and scale for the sidebar.</p></div>
-          </div>
-          <label class="settings-field"><span data-i18n="fontFamily">Font family</span>
-            <select id="fontFamilySelect">
-              <option value="default" data-i18n="fontDefault">VS Code default</option>
-              <option value="system" data-i18n="fontSystem">System UI</option>
-              <option value="monospace" data-i18n="fontMonospace">Monospace</option>
-            </select>
-          </label>
-          <div class="font-size-setting">
-            <div class="font-size-heading"><span data-i18n="fontSize">Font size</span><output id="fontSizeValue">13 px</output></div>
-            <div class="font-size-control">
-              <button id="fontDecrease" type="button" title="Decrease font size" aria-label="Decrease font size" data-i18n-title="fontDecrease" data-i18n-aria="fontDecrease">−</button>
-              <input id="fontSizeRange" type="range" min="10" max="20" step="1" value="13" aria-label="Font size" data-i18n-aria="fontSize">
-              <button id="fontIncrease" type="button" title="Increase font size" aria-label="Increase font size" data-i18n-title="fontIncrease" data-i18n-aria="fontIncrease">＋</button>
-            </div>
-          </div>
-          <div class="font-preview" aria-live="polite">
-            <span data-i18n="previewLabel">Preview</span>
-            <strong>ModelMux / gpt-5</strong>
-            <p data-i18n="previewText">Switch models without losing your original CLI configuration.</p>
-          </div>
-          <button type="button" id="useDefaultFont" class="settings-reset"><span aria-hidden="true">↺</span><span data-i18n="useDefaultFont">Use VS Code default font</span></button>
-        </section>
-      </div>
-      <footer class="dialog-actions settings-actions">
-        <button type="button" id="resetAppearance" class="secondary" data-i18n="resetAppearance">Reset appearance</button>
-        <span class="spacer"></span>
-        <button type="button" id="openVsCodeSettings" class="secondary" data-i18n="openVsCodeSettings">VS Code settings</button>
-        <button type="button" id="doneSettings" class="primary" data-i18n="done">Done</button>
-      </footer>
-    </div>
-  </dialog>
-
-  <dialog id="profileDialog" aria-labelledby="dialogTitle" aria-describedby="dialogSubtitle">
-    <form id="profileForm" method="dialog">
-      <header class="dialog-header">
-        <div>
-          <h2 id="dialogTitle">Add provider</h2>
-          <p id="dialogSubtitle">Secrets remain outside exported profile files.</p>
-        </div>
-        <button type="button" id="closeDialog" class="icon-button subtle" aria-label="Close" data-i18n-aria="close">×</button>
-      </header>
-
-      <div class="dialog-body">
-        <input type="hidden" id="profileId">
-
-        <section class="form-section">
-          <div class="form-section-header">
-            <span class="section-number">01</span>
-            <div><h3 data-i18n="basicInfo">Basics</h3><p data-i18n="basicInfoNote">Choose a connection type and recognizable name.</p></div>
-          </div>
-          <div class="form-grid">
-            <label><span data-i18n="providerType">Provider type</span>
-              <select id="kind">
-                <option value="customResponses" data-i18n="kindCustomResponses">OpenAI Responses gateway</option>
-                <option value="customChat" data-i18n="kindCustomChat">OpenAI Chat Completions gateway</option>
-                <option value="customAnthropic" data-i18n="kindCustomAnthropic">Anthropic Messages gateway</option>
-                <option value="openai" data-i18n="kindOpenAi">Official OpenAI</option>
-                <option value="anthropic" data-i18n="kindAnthropic">Official Anthropic</option>
-                <option value="gemini" data-i18n="kindGemini">Official Google Gemini</option>
-                <option value="grok" data-i18n="kindGrok">Official xAI Grok</option>
-                <option value="bedrock">Amazon Bedrock</option>
-                <option value="ollama" data-i18n="kindOllama">Local Ollama</option>
-                <option value="lmstudio" data-i18n="kindLmStudio">Local LM Studio</option>
-              </select>
-            </label>
-            <label><span data-i18n="profileName">Profile name</span>
-              <input id="name" required placeholder="Example: Lab gateway" data-i18n-placeholder="profileNamePlaceholder">
-            </label>
-          </div>
-          <div id="connectionHint" class="connection-hint"></div>
-        </section>
-
-        <section id="customFields" class="form-section">
-          <div class="form-section-header">
-            <span class="section-number">02</span>
-            <div><h3 data-i18n="connectionAuth">Connection & authentication</h3><p data-i18n="connectionAuthNote">Use SecretStorage, environment variables, or no authentication.</p></div>
-          </div>
-          <div class="form-grid">
-            <label><span>Provider ID</span>
-              <input id="providerId" placeholder="custom_proxy">
-            </label>
-            <label><span data-i18n="authMode">Authentication</span>
-              <select id="authMode">
-                <option value="secret" data-i18n="authSecret">SecretStorage / Windows compatibility</option>
-                <option value="env" data-i18n="authEnv">Bearer environment variable</option>
-                <option value="envHeaders" data-i18n="authEnvHeaders">Environment-variable headers</option>
-                <option value="none" data-i18n="authNone">No authentication</option>
-              </select>
-            </label>
-            <label class="full">Base URL
-              <input id="baseUrl" placeholder="https://example.com/v1">
-              <small data-i18n="baseUrlNote">Usually ends at /v1; do not include the request path.</small>
-            </label>
-            <label id="apiKeyLabel" class="full"><span>API Key</span>
-              <div class="input-with-action">
-                <input id="apiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved secret" data-i18n-placeholder="apiKeyPlaceholder">
-                <button type="button" id="toggleApiKey" aria-label="Show or hide API Key" data-i18n-aria="toggleApiKey" data-i18n="show">Show</button>
-              </div>
-              <small data-i18n="apiKeyNote">Stored in VS Code SecretStorage. Codex may create a protected runtime credential while active.</small>
-            </label>
-            <label id="envKeyLabel" class="full hidden"><span data-i18n="envKey">API Key environment variable</span>
-              <input id="envKey" placeholder="CUSTOM_CODEX_API_KEY">
-              <small data-i18n="envKeyNote">The target CLI reads this variable from its launch environment.</small>
-            </label>
-            <label id="envKeyInstructionsLabel" class="full hidden"><span data-i18n="envHint">Environment setup hint (optional)</span>
-              <input id="envKeyInstructions" placeholder="Set MODEL_SWITCH_API_KEY" data-i18n-placeholder="envHintPlaceholder">
-            </label>
-            <label class="checkbox-row danger-option full">
-              <input id="allowInsecureHttp" type="checkbox">
-              <span><span data-i18n="allowHttp">Allow remote HTTP (unsafe)</span><small data-i18n="allowHttpNote">Remote HTTP sends credentials in clear text. Enable only when the risk is understood.</small></span>
-            </label>
-            <label class="checkbox-row danger-option full">
-              <input id="allowInsecureModelDiscovery" type="checkbox">
-              <span><span data-i18n="ignoreTls">Ignore TLS errors for model discovery (unsafe)</span><small data-i18n="ignoreTlsNote">Only affects the plugin's model-list request, never CLI inference requests.</small></span>
-            </label>
-          </div>
-          <details class="advanced-details">
-            <summary data-i18n="advancedCompatibility">Advanced compatibility</summary>
-            <div class="form-grid advanced-grid">
-              <label class="full"><span data-i18n="discoveryPath">Model discovery path</span>
-                <input id="modelDiscoveryPath" placeholder="/models">
-                <small data-i18n="discoveryPathNote">A relative path or full same-origin URL. Default: /models.</small>
-              </label>
-              <label><span data-i18n="requestRetries">HTTP request retries</span>
-                <input id="requestMaxRetries" type="number" min="0" max="20" value="0">
-              </label>
-              <label><span data-i18n="streamRetries">Stream retries</span>
-                <input id="streamMaxRetries" type="number" min="0" max="20" value="2">
-              </label>
-              <label class="full"><span data-i18n="streamTimeout">Stream idle timeout (ms)</span>
-                <input id="streamIdleTimeoutMs" type="number" min="1000" max="3600000" value="300000">
-              </label>
-              <label class="checkbox-row full">
-                <input id="supportsWebsockets" type="checkbox">
-                <span data-i18n="websocketSupport">Provider supports Responses WebSocket transport</span>
-              </label>
-              <label class="full"><span data-i18n="queryParams">Query parameters JSON</span>
-                <textarea id="queryParams" rows="3" placeholder='{"api-version":"2025-04-01-preview"}'></textarea>
-              </label>
-              <label class="full"><span data-i18n="staticHeaders">Static headers JSON (no secrets)</span>
-                <textarea id="httpHeaders" rows="3" placeholder='{"X-Client":"codex"}'></textarea>
-              </label>
-              <label class="full"><span data-i18n="envHeaders">Environment-variable headers JSON</span>
-                <textarea id="envHttpHeaders" rows="3" placeholder='{"api-key":"AZURE_OPENAI_API_KEY"}'></textarea>
-                <small data-i18n="envHeadersNote">Keys are HTTP headers; values are environment-variable names.</small>
-              </label>
-            </div>
-          </details>
-        </section>
-
-        <section id="bedrockFields" class="form-section hidden">
-          <div class="form-section-header">
-            <span class="section-number">02</span>
-            <div><h3 data-i18n="awsCredentials">AWS credentials</h3><p data-i18n="awsCredentialsNote">Uses the current system AWS credential chain.</p></div>
-          </div>
-          <div class="form-grid">
-            <label><span>AWS Region</span>
-              <input id="awsRegion" placeholder="us-east-1">
-            </label>
-            <label><span data-i18n="awsProfile">AWS Profile (optional)</span>
-              <input id="awsProfile" placeholder="default">
-            </label>
-          </div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-header">
-            <span class="section-number">03</span>
-            <div><h3 data-i18n="models">Models</h3><p data-i18n="modelsNote">Choose a default model or synchronize from /models.</p></div>
-          </div>
-          <div class="form-grid">
-            <label class="full"><span data-i18n="modelId">Model ID</span>
-              <input id="selectedModel" list="modelSuggestions" required placeholder="Enter a model ID accepted by the target CLI" data-i18n-placeholder="modelIdPlaceholder">
-              <datalist id="modelSuggestions"></datalist>
-            </label>
-            <label class="full"><span data-i18n="availableModels">Available models</span>
-              <textarea id="models" rows="5" placeholder="One model ID per line" data-i18n-placeholder="availableModelsPlaceholder"></textarea>
-            </label>
-          </div>
-          <div id="fetchRow" class="inline-row">
-            <button type="button" id="fetchModels" class="secondary" data-i18n="fetchModels">Fetch /models</button>
-            <span id="fetchResult" class="muted"></span>
-          </div>
-        </section>
-
-        <section class="form-section">
-          <div class="form-section-header">
-            <span class="section-number">04</span>
-            <div><h3 data-i18n="compatibilityPolicy">Compatibility policy</h3><p data-i18n="compatibilityPolicyNote">Controls whether reasoning effort is written.</p></div>
-          </div>
-          <label><span data-i18n="reasoningPolicy">Reasoning effort policy</span>
-            <select id="reasoningPolicy">
-              <option value="auto" data-i18n="reasoningAuto">Auto: high for GPT/Codex, omit elsewhere</option>
-              <option value="none" data-i18n="reasoningNone">Do not write reasoning_effort</option>
-              <option value="minimal">minimal</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-            </select>
-          </label>
-        </section>
-      </div>
-
-      <footer class="dialog-actions">
-        <button type="button" id="cancelDialog" class="secondary" data-i18n="cancel">Cancel</button>
-        <button type="submit" id="saveProfile" class="primary" data-i18n="saveProvider">Save provider</button>
-      </footer>
-    </form>
-  </dialog>
-
-  <div id="toast" role="status"></div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
+    return getDashboardHtml(webview, this.context.extensionUri);
   }
 
   async refresh() {
@@ -2740,27 +2839,33 @@ class DashboardViewProvider {
     await this.view.webview.postMessage({ type: 'response', requestId, ok, data, error });
   }
 
-  async showAddProvider() {
-    this.pendingAction = 'addProvider';
+  async showAction(action, options = {}) {
+    this.pendingAction = { action, ...options };
     await openDashboard();
     if (this.ready && this.view) {
+      const payload = this.pendingAction;
       this.pendingAction = undefined;
-      await this.view.webview.postMessage({ type: 'action', action: 'addProvider' });
+      await this.view.webview.postMessage({ type: 'action', ...payload });
     }
+  }
+
+  async showAddProvider() {
+    return this.showAction('addProvider');
   }
 
   async handleMessage(message) {
     const requestId = message && message.requestId;
     try {
+      validateWebviewMessage(message);
       switch (message.command) {
         case 'ready':
           this.ready = true;
           await this.refresh();
           await this.respond(requestId, true, {});
           if (this.pendingAction && this.view) {
-            const action = this.pendingAction;
+            const payload = typeof this.pendingAction === 'string' ? { action: this.pendingAction } : this.pendingAction;
             this.pendingAction = undefined;
-            await this.view.webview.postMessage({ type: 'action', action });
+            await this.view.webview.postMessage({ type: 'action', ...payload });
           }
           return;
         case 'refreshState':
@@ -2847,6 +2952,8 @@ class DashboardViewProvider {
             allowInsecureHttp: Boolean(input.allowInsecureHttp),
             allowInsecureModelDiscovery: Boolean(input.allowInsecureModelDiscovery)
           };
+          assertNoSensitiveStaticValues(temp.queryParams, uiText('Query parameters', '查询参数'));
+          assertNoSensitiveStaticValues(temp.httpHeaders, uiText('Static headers', '静态请求头'));
           if (!temp.baseUrl) throw new Error(uiText('Enter a Base URL first.', '请先填写 Base URL。'));
           let apiKey = String(message.apiKey || '').trim() || undefined;
           if (temp.authMode === 'secret' && !apiKey && existing) apiKey = await this.context.secrets.get(secretKey(existing.id));
@@ -2883,9 +2990,14 @@ class DashboardViewProvider {
           const profile = profiles.find(item => item.id === message.profileId);
           if (!profile || !isCustomProfile(profile)) throw new Error(uiText('No refreshable custom provider was found.', '未找到可刷新的自定义 Provider。'));
           const models = await fetchModelsForProfile(this.context, profile);
-          profile.models = models;
-          if (!models.includes(profile.selectedModel)) profile.selectedModel = models[0];
-          await saveProfiles(this.context, profiles.map(item => item.id === profile.id ? profile : item));
+          await withProfileMutation(profile.id, async () => {
+            const current = getProfiles(this.context);
+            const latest = current.find(item => item.id === profile.id);
+            if (!latest) throw new Error(uiText('Provider was deleted while models were loading.', '获取模型期间 Provider 已被删除。'));
+            latest.models = models;
+            if (!models.includes(latest.selectedModel)) latest.selectedModel = models[0];
+            await saveProfiles(this.context, current.map(item => item.id === latest.id ? latest : item));
+          });
           await this.refresh();
           await this.respond(requestId, true, { models });
           return;
@@ -2948,27 +3060,87 @@ class DashboardViewProvider {
         case 'restoreOriginal': {
           const targetId = normalizeTargetId(message.targetId || getSelectedTargetId(this.context));
           const result = await restoreTarget(this.context, targetId, this.statusBar, { showError: false, throwOnError: true, offerReload: false });
-          if (!result) throw new Error(uiText('Restore was cancelled.', '恢复操作已取消。'));
+          if (!result) {
+            await this.respond(requestId, true, { status: 'cancelled' });
+            return;
+          }
           await this.refresh();
-          await this.respond(requestId, true, {});
+          await this.respond(requestId, true, { status: 'completed' });
           if (targetId === 'codex') void offerReload(uiText('Restored the original Codex configuration and removed the runtime credential.', '已恢复原来的 Codex 配置，并删除运行时临时密钥。'));
           else void vscode.window.showInformationMessage(uiText(`Restored the original ${targetLabel(targetId)} configuration.`, `已恢复 ${targetLabel(targetId)} 的原始配置。`));
           return;
         }
-        case 'runDiagnostics': {
+        case 'previewRestore': {
+          const result = await previewRestoreConfig(this.context, message.targetId);
+          await this.respond(requestId, true, result);
+          return;
+        }
+        case 'previewProfile': {
+          const result = await previewProfileConfig(this.context, message.targetId, message.profileId, message.model);
+          await this.respond(requestId, true, result);
+          return;
+        }
+        case 'testProvider': {
+          const result = await testProviderConnection(this.context, message.profileId);
+          await this.respond(requestId, true, result);
+          return;
+        }
+        case 'runDiagnostics':
+        case 'getDiagnostics': {
+          const result = await collectTargetDiagnostics(this.context, message.targetId || getSelectedTargetId(this.context));
+          if (message.command === 'runDiagnostics') await showDiagnostics(this.context, message.targetId || getSelectedTargetId(this.context));
+          await this.respond(requestId, true, { status: 'completed', checks: result.checks, passed: result.passed, warned: result.warned || 0, failed: result.failed, platform: result.platform });
+          return;
+        }
+        case 'showDiagnosticsReport': {
           const result = await showDiagnostics(this.context, message.targetId || getSelectedTargetId(this.context));
-          await this.respond(requestId, true, { passed: result.passed, failed: result.failed });
+          await this.respond(requestId, true, { status: 'completed', passed: result.passed, failed: result.failed });
           return;
         }
         case 'exportProfiles': {
-          await exportProfiles(this.context);
-          await this.respond(requestId, true, {});
+          const result = await exportProfiles(this.context);
+          await this.respond(requestId, true, result);
           return;
         }
         case 'importProfiles': {
-          await importProfiles(this.context);
+          const result = await importProfiles(this.context);
+          if (result.status === 'completed') await this.refresh();
+          await this.respond(requestId, true, result);
+          return;
+        }
+        case 'selectImportFile': {
+          const result = await pickImportPlan(this.context);
+          if (result.status === 'cancelled') {
+            await this.respond(requestId, true, result);
+            return;
+          }
+          const importId = crypto.randomBytes(18).toString('base64url');
+          this.importPlans.clear();
+          this.importPlans.set(importId, result.plan);
+          await this.respond(requestId, true, {
+            status: 'completed',
+            importId,
+            source: result.source,
+            added: result.plan.added,
+            conflicts: result.plan.conflicts,
+            entries: result.plan.entries.map(entry => ({
+              status: entry.status,
+              id: entry.profile.id,
+              name: entry.profile.name,
+              kind: entry.profile.kind
+            }))
+          });
+          return;
+        }
+        case 'commitImport': {
+          validateBoundedString(message.importId, 'importId', 128, true);
+          if (!['skip', 'replace'].includes(message.strategy)) throw new Error('导入冲突策略无效。');
+          const plan = this.importPlans.get(message.importId);
+          this.importPlans.delete(message.importId);
+          if (!plan) throw new Error(uiText('The import preview expired. Select the file again.', '导入预览已过期，请重新选择文件。'));
+          const result = await commitImportPlan(this.context, plan, message.strategy);
           await this.refresh();
-          await this.respond(requestId, true, {});
+          await this.respond(requestId, true, result);
           return;
         }
         case 'openConfig': {
@@ -2984,7 +3156,7 @@ class DashboardViewProvider {
           await vscode.commands.executeCommand('workbench.action.reloadWindow');
           return;
         case 'openSettings':
-          const extensionId = this.context.extension && this.context.extension.id || 'lichao-local.codex-config-switcher';
+          const extensionId = this.context.extension && this.context.extension.id || 'cherry-local.codex-config-switcher';
           await vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${extensionId}`);
           await this.respond(requestId, true, {});
           return;
@@ -2997,6 +3169,17 @@ class DashboardViewProvider {
       if (!requestId) await vscode.window.showErrorMessage(text);
     }
   }
+}
+
+async function chooseProfileForDashboardAction(context, title, predicate = () => true) {
+  const profile = await chooseProfile(context, title, predicate);
+  return profile && profile.id;
+}
+
+async function routeProfileCommand(context, action, title, predicate) {
+  const profileId = await chooseProfileForDashboardAction(context, title, predicate);
+  if (!profileId) return;
+  await dashboardProvider.showAction(action, { profileId, targetId: getSelectedTargetId(context) });
 }
 
 async function openDashboard() {
@@ -3039,18 +3222,18 @@ async function activate(context) {
     vscode.commands.registerCommand('codexConfigSwitcher.openDashboard', () => openDashboard()),
     vscode.commands.registerCommand('codexConfigSwitcher.refreshDashboard', () => dashboardProvider.refresh()),
     vscode.commands.registerCommand('codexConfigSwitcher.openMenu', () => openMenu(context, statusBar)),
-    vscode.commands.registerCommand('codexConfigSwitcher.switchProfile', () => openDashboard()),
-    vscode.commands.registerCommand('codexConfigSwitcher.enableCustom', () => openDashboard()),
+    vscode.commands.registerCommand('codexConfigSwitcher.switchProfile', () => dashboardProvider.showAction('switchProfile', { targetId: getSelectedTargetId(context) })),
+    vscode.commands.registerCommand('codexConfigSwitcher.enableCustom', () => dashboardProvider.showAction('switchProfile', { targetId: getSelectedTargetId(context) })),
     vscode.commands.registerCommand('codexConfigSwitcher.addProfile', () => dashboardProvider.showAddProvider()),
-    vscode.commands.registerCommand('codexConfigSwitcher.editProfile', () => openDashboard()),
-    vscode.commands.registerCommand('codexConfigSwitcher.deleteProfile', () => openDashboard()),
-    vscode.commands.registerCommand('codexConfigSwitcher.refreshModels', () => openDashboard()),
-    vscode.commands.registerCommand('codexConfigSwitcher.restoreOriginal', () => openDashboard()),
-    vscode.commands.registerCommand('codexConfigSwitcher.showStatus', () => openDashboard()),
+    vscode.commands.registerCommand('codexConfigSwitcher.editProfile', () => routeProfileCommand(context, 'editProfile', uiText('Choose a provider to edit', '选择要编辑的 Provider'))),
+    vscode.commands.registerCommand('codexConfigSwitcher.deleteProfile', () => routeProfileCommand(context, 'deleteProfile', uiText('Choose a provider to delete', '选择要删除的 Provider'))),
+    vscode.commands.registerCommand('codexConfigSwitcher.refreshModels', () => routeProfileCommand(context, 'refreshModels', uiText('Choose a provider to synchronize', '选择要同步模型的 Provider'), item => isCustomProfile(item))),
+    vscode.commands.registerCommand('codexConfigSwitcher.restoreOriginal', () => dashboardProvider.showAction('restoreOriginal', { targetId: getSelectedTargetId(context) })),
+    vscode.commands.registerCommand('codexConfigSwitcher.showStatus', () => dashboardProvider.showAction('showStatus', { targetId: getSelectedTargetId(context) })),
     vscode.commands.registerCommand('codexConfigSwitcher.runDiagnostics', () => showDiagnostics(context, getSelectedTargetId(context))),
     vscode.commands.registerCommand('codexConfigSwitcher.exportProfiles', () => exportProfiles(context)),
     vscode.commands.registerCommand('codexConfigSwitcher.importProfiles', runAndRefresh(() => importProfiles(context))),
-    vscode.commands.registerCommand('codexConfigSwitcher.clearApiKey', () => openDashboard())
+    vscode.commands.registerCommand('codexConfigSwitcher.clearApiKey', () => routeProfileCommand(context, 'clearApiKey', uiText('Choose an API key to clear', '选择要清除密钥的 Provider'), item => isCustomProfile(item) && ['secret', 'bearer'].includes(item.authMode)))
   );
 
   recreateRuntimeTokenIfNeeded(context, statusBar).then(() => {
@@ -3095,6 +3278,19 @@ module.exports = {
     updateActiveTarget,
     contentHash,
     withTargetMutation,
-    readGlobalSettings
+    withProfileMutation,
+    readGlobalSettings,
+    getTargetManagementState,
+    canAutomaticallyRefreshManagedConfig,
+    assertManagedContentUnchanged,
+    exportableProfile,
+    createImportPlan,
+    applyImportPlan,
+    validateWebviewMessage,
+    getDashboardHtml,
+    collectTargetDiagnostics,
+    verifyWindowsPrivateAcl,
+    testProviderConnection,
+    previewProfileConfig
   }
 };

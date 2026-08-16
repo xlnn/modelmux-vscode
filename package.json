@@ -2,7 +2,7 @@
   "name": "codex-config-switcher",
   "displayName": "ModelMux: AI CLI Model Manager",
   "description": "A secure visual model and provider manager for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes.",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "publisher": "cherry-local",
   "license": "MIT",
   "icon": "media/modelmux.png",
@@ -15,7 +15,8 @@
     "url": "https://github.com/xlnn/modelmux-vscode/issues"
   },
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.90.0",
+    "node": ">=22.0.0"
   },
   "categories": [
     "Other",
@@ -80,90 +81,90 @@
     "commands": [
       {
         "command": "codexConfigSwitcher.openDashboard",
-        "title": "ModelMux: Open dashboard",
+        "title": "Open Dashboard",
         "category": "ModelMux",
         "icon": "$(layout-sidebar-right)"
       },
       {
         "command": "codexConfigSwitcher.refreshDashboard",
-        "title": "ModelMux: Refresh dashboard",
+        "title": "Refresh Dashboard",
         "category": "ModelMux",
         "icon": "$(refresh)"
       },
       {
         "command": "codexConfigSwitcher.openMenu",
-        "title": "ModelMux: Open menu",
+        "title": "Open Menu",
         "category": "ModelMux",
         "icon": "$(settings-gear)"
       },
       {
         "command": "codexConfigSwitcher.switchProfile",
-        "title": "ModelMux: Switch provider / model",
+        "title": "Switch Provider / Model",
         "category": "ModelMux",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "codexConfigSwitcher.enableCustom",
-        "title": "ModelMux: Switch custom model (legacy command)",
+        "title": "Switch Custom Model (Legacy Command)",
         "category": "ModelMux"
       },
       {
         "command": "codexConfigSwitcher.addProfile",
-        "title": "ModelMux: Add provider",
+        "title": "Add Provider",
         "category": "ModelMux",
         "icon": "$(add)"
       },
       {
         "command": "codexConfigSwitcher.editProfile",
-        "title": "ModelMux: Edit provider",
+        "title": "Edit Provider",
         "category": "ModelMux",
         "icon": "$(edit)"
       },
       {
         "command": "codexConfigSwitcher.deleteProfile",
-        "title": "ModelMux: Delete provider",
+        "title": "Delete Provider",
         "category": "ModelMux",
         "icon": "$(trash)"
       },
       {
         "command": "codexConfigSwitcher.refreshModels",
-        "title": "ModelMux: Refresh model list",
+        "title": "Refresh Model List",
         "category": "ModelMux",
         "icon": "$(sync)"
       },
       {
         "command": "codexConfigSwitcher.restoreOriginal",
-        "title": "ModelMux: Restore current CLI configuration",
+        "title": "Restore Current CLI Configuration",
         "category": "ModelMux",
         "icon": "$(history)"
       },
       {
         "command": "codexConfigSwitcher.showStatus",
-        "title": "ModelMux: Show status",
+        "title": "Show Status",
         "category": "ModelMux",
         "icon": "$(info)"
       },
       {
         "command": "codexConfigSwitcher.runDiagnostics",
-        "title": "ModelMux: Run diagnostics for current CLI",
+        "title": "Run Diagnostics for Current CLI",
         "category": "ModelMux",
         "icon": "$(pass)"
       },
       {
         "command": "codexConfigSwitcher.clearApiKey",
-        "title": "ModelMux: Clear an API key",
+        "title": "Clear an API Key",
         "category": "ModelMux",
         "icon": "$(key)"
       },
       {
         "command": "codexConfigSwitcher.exportProfiles",
-        "title": "ModelMux: Export provider profiles",
+        "title": "Export Provider Profiles",
         "category": "ModelMux",
         "icon": "$(export)"
       },
       {
         "command": "codexConfigSwitcher.importProfiles",
-        "title": "ModelMux: Import provider profiles",
+        "title": "Import Provider Profiles",
         "category": "ModelMux",
         "icon": "$(import)"
       }
@@ -235,6 +236,7 @@
       "properties": {
         "codexConfigSwitcher.approvalPolicy": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "untrusted",
             "on-request",
@@ -245,6 +247,7 @@
         },
         "codexConfigSwitcher.sandboxMode": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "read-only",
             "workspace-write",
@@ -351,15 +354,17 @@
   "scripts": {
     "check": "node --check extension.js && node --check media/dashboard.js",
     "icon": "node scripts/generate-icon.js",
-    "build": "esbuild extension.js --bundle --minify --legal-comments=none --platform=node --target=node20 --main-fields=module,main --external:vscode --outfile=dist/extension.js",
-    "test": "npm run build && node test/manifest-smoke.js && node test/linux-smoke.js && node test/config-smoke.js && node test/activation-smoke.js && node test/multi-cli-smoke.js && node test/bundle-smoke.js",
+    "assets": "node -e \"const fs=require('node:fs'),path=require('node:path');const root=path.dirname(require.resolve('@vscode/codicons/package.json'));for(const file of ['codicon.css','codicon.ttf'])fs.copyFileSync(path.join(root,'dist',file),path.join('media',file))\"",
+    "build": "npm run assets && esbuild extension.js --bundle --minify --legal-comments=none --platform=node --target=node20 --main-fields=module,main --external:vscode --outfile=dist/extension.js",
+    "test": "npm run build && node test/manifest-smoke.js && node test/security-smoke.js && node test/webview-smoke.js && node test/linux-smoke.js && node test/config-smoke.js && node test/activation-smoke.js && node test/multi-cli-smoke.js && node test/bundle-smoke.js",
     "vscode:prepublish": "npm run build",
-    "package": "npm run icon && npm run build && vsce package --out modelmux-1.1.2.vsix"
+    "package": "npm run icon && npm run build && node -e \"const cp=require('node:child_process');const out='modelmux-'+process.env.npm_package_version+'.vsix';const result=cp.spawnSync(process.execPath,[require.resolve('@vscode/vsce/vsce'),'package','--out',out],{stdio:'inherit'});if(result.error)throw result.error;process.exitCode=result.status??1\""
   },
   "devDependencies": {
+    "@vscode/codicons": "^0.0.45",
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.25.8",
-    "sharp": "^0.34.3"
+    "sharp": "^0.35.3"
   },
   "dependencies": {
     "json5": "^2.2.3",
@@ -368,7 +373,11 @@
   },
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": true,
+      "restrictedConfigurations": [
+        "codexConfigSwitcher.approvalPolicy",
+        "codexConfigSwitcher.sandboxMode"
+      ]
     },
     "virtualWorkspaces": {
       "supported": false,

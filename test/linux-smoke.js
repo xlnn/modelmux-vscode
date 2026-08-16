@@ -140,7 +140,7 @@ const api = extension.__test;
       async store(name, value) { secrets.set(name, value); },
       async delete(name) { secrets.delete(name); }
     },
-    extension: { packageJSON: { version: '1.1.0' }, id: 'lichao-local.codex-config-switcher' }
+    extension: { packageJSON: { version: '1.2.0' }, id: 'cherry-local.codex-config-switcher' }
   };
 
   const diagnostics = await api.collectDiagnostics(context);

@@ -64,6 +64,19 @@ try {
   assert.strictEqual(openCode.model, 'chat_gateway/chat-model');
   assert.strictEqual(openCode.provider.chat_gateway.options.apiKey, '{env:MODEL_SWITCH_API_KEY}');
 
+  const anthropicOpenCodeText = api.buildTargetConfig(
+    'opencode',
+    customAnthropic,
+    'claude-model',
+    '{\n  // preserve anthropic settings\n  "theme": "system"\n}\n'
+  );
+  assert(anthropicOpenCodeText.includes('// preserve anthropic settings'));
+  const anthropicOpenCode = JSON5.parse(anthropicOpenCodeText);
+  assert.strictEqual(api.targetCompatibility('opencode', customAnthropic).supported, true);
+  assert.strictEqual(anthropicOpenCode.model, 'claude_gateway/claude-model');
+  assert.strictEqual(anthropicOpenCode.provider.claude_gateway.npm, '@ai-sdk/anthropic');
+  assert.strictEqual(anthropicOpenCode.provider.claude_gateway.options.apiKey, '{env:ANTHROPIC_API_KEY}');
+
   const openClaw = JSON.parse(api.buildTargetConfig('openclaw', customChat, 'chat-model', '{"gateway":{"port":18789}}'));
   assert.strictEqual(openClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
   assert.strictEqual(openClaw.models.providers.chat_gateway.api, 'openai-completions');
@@ -100,12 +113,28 @@ try {
 
   (async () => {
     await Promise.all([
+      api.updateActiveTarget(context, 'codex', { profileId: customAnthropic.id, model: 'codex-model' }),
+      api.updateActiveTarget(context, 'opencode', { profileId: customAnthropic.id, model: 'opencode-model' }),
       api.updateActiveTarget(context, 'claude', { profileId: customAnthropic.id, model: 'claude-model' }),
       api.updateActiveTarget(context, 'hermes', { profileId: customChat.id, model: 'chat-model' })
     ]);
-    assert(api.getActiveTargets(context).claude && api.getActiveTargets(context).hermes, 'concurrent target state updates must not overwrite each other');
+    const activeTargets = api.getActiveTargets(context);
+    assert(activeTargets.claude && activeTargets.hermes, 'concurrent target state updates must not overwrite each other');
+    assert.strictEqual(activeTargets.codex.model, 'codex-model');
+    assert.strictEqual(activeTargets.opencode.model, 'opencode-model');
+    await api.updateActiveTarget(context, 'codex', { profileId: customAnthropic.id, model: 'codex-model-2' });
+    assert.strictEqual(api.getActiveTargets(context).codex.model, 'codex-model-2');
+    assert.strictEqual(api.getActiveTargets(context).opencode.model, 'opencode-model', 'each target must own its active model');
+    await api.updateActiveTarget(context, 'codex', undefined);
+    await api.updateActiveTarget(context, 'opencode', undefined);
     await api.updateActiveTarget(context, 'claude', undefined);
     await api.updateActiveTarget(context, 'hermes', undefined);
+
+    const codexHash = api.contentHash('model = "gpt-5"\nmodel_provider = "openai"\n');
+    const gatewayHash = api.contentHash('model = "gpt-5"\nmodel_provider = "gateway"\n');
+    assert.match(codexHash, /^[a-f0-9]{64}$/);
+    assert.notStrictEqual(codexHash, gatewayHash, 'different Codex configurations must not share an applied-content hash');
+    assert.strictEqual(codexHash, api.contentHash('model = "gpt-5"\nmodel_provider = "openai"\n'));
 
     const order = [];
     await Promise.all([

@@ -45,7 +45,7 @@ const state = new Map();
 const context = {
   subscriptions: [],
   extensionUri: { fsPath: sandbox },
-  extension: { id: 'lichao-local.codex-config-switcher', packageJSON: { version: '1.1.0' } },
+  extension: { id: 'cherry-local.codex-config-switcher', packageJSON: { version: '1.2.0' } },
   globalState: {
     get(key, fallback) { return state.has(key) ? state.get(key) : fallback; },
     async update(key, value) { if (value === undefined) state.delete(key); else state.set(key, value); }
