@@ -322,7 +322,8 @@
     if (row) row.classList.add('menu-open');
     openMenu = { menu, button, row };
     const items = menuItems(menu);
-    if (items[0]) items[0].focus();
+    if (items[0]) items[0].focus({ preventScroll: true });
+    if (row) menu.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
   function closeActiveMenu(restoreFocus = true) {
@@ -661,7 +662,7 @@
       title: !profile.supported ? compatibilityReason(profile) : canApply ? t('enableFor', { target: state.targetLabel }) : t('applyUnavailable')
     });
     activateButton.addEventListener('click', () => activate(profile, select, activateButton));
-    row.append(create('div', { className: 'provider-controls' }, [select, activateButton, menu]));
+    row.append(create('div', { className: 'provider-controls' }, [select, activateButton]), menu);
     return row;
   }
 

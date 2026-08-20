@@ -63,7 +63,11 @@ function plannedProfiles(plan) {
     'createImportPlan',
     'applyImportPlan',
     'getTargetManagementState',
-    'canAutomaticallyRefreshManagedConfig'
+    'canAutomaticallyRefreshManagedConfig',
+    'parseManagedCodexMetadata',
+    'reconcileManagedCodexState',
+    'canRecreateRuntimeTokenFromManagedConfig',
+    'recreateRuntimeTokenIfNeeded'
   ]);
 
   const secretValues = [
@@ -172,6 +176,176 @@ function plannedProfiles(plan) {
   assert.strictEqual(drifted.status, 'managed-drifted');
   assert.strictEqual(drifted.canApply, false, 'Codex hash collisions must block automatic replacement');
   assert.strictEqual(api.canAutomaticallyRefreshManagedConfig(drifted), false);
+
+  const tokenPath = '/run/user/1000/codex-model-profile-token-1000';
+  const tokenAuth = api.authCommandForToken(tokenPath, 'linux');
+  const tokenContent = [
+    '# Managed by Codex Model Profile Manager',
+    '# profile_id = shared-profile',
+    'model = "remote-model"',
+    'model_provider = "gateway"',
+    '',
+    '[model_providers.gateway]',
+    'base_url = "https://gateway.example/v1"',
+    'wire_api = "responses"',
+    '',
+    '[model_providers.gateway.auth]',
+    `command = "${tokenAuth.command}"`,
+    `args = ["${tokenPath}"]`,
+    'timeout_ms = 5000',
+    '# harmless external comment',
+    ''
+  ].join('\n');
+  const tokenManagement = {
+    status: 'managed-drifted',
+    active: undefined,
+    originalState: { profileId: 'shared-profile', model: 'remote-model', lastAppliedHash: 'previous-hash' }
+  };
+  const tokenProfile = profile({ authMode: 'secret' });
+  assert.strictEqual(
+    api.canRecreateRuntimeTokenFromManagedConfig(tokenContent, tokenProfile, tokenPath, tokenManagement, 'linux'),
+    true,
+    'a harmless config drift may recreate the private token without rewriting config'
+  );
+  assert.strictEqual(
+    api.canRecreateRuntimeTokenFromManagedConfig(
+      tokenContent.replace('https://gateway.example/v1', 'https://attacker.invalid/v1'),
+      tokenProfile,
+      tokenPath,
+      tokenManagement,
+      'linux'
+    ),
+    false,
+    'token recreation must stop if the credential destination changed'
+  );
+  assert.strictEqual(
+    api.canRecreateRuntimeTokenFromManagedConfig(
+      tokenContent.replace(tokenPath, '/tmp/untrusted-token'),
+      tokenProfile,
+      tokenPath,
+      tokenManagement,
+      'linux'
+    ),
+    false,
+    'token recreation must stop if the helper path changed'
+  );
+
+  const raceDir = path.join(sandbox, 'startup-delete-race');
+  const raceFiles = {
+    targetId: 'codex',
+    configDir: raceDir,
+    codexDir: raceDir,
+    config: path.join(raceDir, 'config.toml'),
+    backup: path.join(raceDir, 'config.toml.backup'),
+    originalState: path.join(raceDir, 'config.toml.state.json'),
+    token: path.join(raceDir, 'runtime-token')
+  };
+  fs.mkdirSync(raceDir, { recursive: true });
+  const raceProfile = profile({
+    id: 'startup-race-profile',
+    authMode: 'secret',
+    selectedModel: 'race-model',
+    models: ['race-model']
+  });
+  const raceContent = api.buildManagedConfig(raceProfile, 'race-model', raceFiles.token, 'race-secret');
+  fs.writeFileSync(raceFiles.config, raceContent);
+  fs.writeFileSync(raceFiles.originalState, JSON.stringify({
+    existed: false,
+    lastAppliedHash: api.contentHash(raceContent),
+    profileId: raceProfile.id,
+    model: 'race-model'
+  }));
+  const raceValues = new Map([
+    ['modelProfilesV2', [raceProfile]],
+    ['activeCliTargetsV1', { codex: { profileId: raceProfile.id, model: 'race-model' } }]
+  ]);
+  let releaseSecret;
+  let markSecretRead;
+  const secretRead = new Promise(resolve => { markSecretRead = resolve; });
+  const secretGate = new Promise(resolve => { releaseSecret = resolve; });
+  const raceContext = {
+    globalState: {
+      get(key, fallback) { return raceValues.has(key) ? raceValues.get(key) : fallback; },
+      async update(key, value) { if (value === undefined) raceValues.delete(key); else raceValues.set(key, value); }
+    },
+    secrets: {
+      async get() {
+        markSecretRead();
+        await secretGate;
+        return 'race-secret';
+      }
+    }
+  };
+  const raceStatusBar = { show() {}, text: '', tooltip: '' };
+  const startupRefresh = api.recreateRuntimeTokenIfNeeded(raceContext, raceStatusBar, raceFiles);
+  await secretRead;
+  const externallyEditedRaceContent = `${raceContent}# edit while SecretStorage is pending\n`;
+  fs.writeFileSync(raceFiles.config, externallyEditedRaceContent);
+  let competingMutationStarted = false;
+  const competingMutation = api.withProfileMutation(raceProfile.id, () => api.withTargetMutation('codex', async () => {
+    competingMutationStarted = true;
+  }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(competingMutationStarted, false, 'startup refresh must hold the profile and Codex mutation locks');
+  releaseSecret();
+  await startupRefresh;
+  await competingMutation;
+  assert.strictEqual(competingMutationStarted, true);
+  assert.strictEqual(
+    fs.readFileSync(raceFiles.config, 'utf8'),
+    externallyEditedRaceContent,
+    'startup refresh must not overwrite an external edit made after its initial hash check'
+  );
+
+  const legacyDir = path.join(sandbox, 'legacy-codex-management');
+  fs.mkdirSync(legacyDir, { recursive: true });
+  const legacyFiles = {
+    targetId: 'codex',
+    configDir: legacyDir,
+    config: path.join(legacyDir, 'config.toml'),
+    backup: path.join(legacyDir, 'config.toml.backup'),
+    originalState: path.join(legacyDir, 'config.toml.state.json')
+  };
+  const legacyContent = [
+    '# Managed by Codex Model Profile Manager',
+    '# profile_id = shared-profile',
+    '# profile_name = Gateway',
+    'model = "remote-model"',
+    'model_provider = "gateway"',
+    ''
+  ].join('\n');
+  fs.writeFileSync(legacyFiles.config, legacyContent);
+  fs.writeFileSync(legacyFiles.originalState, JSON.stringify({ existed: false }));
+  values.set('modelProfilesV2', [profile()]);
+  values.set('activeCliTargetsV1', { codex: { profileId: 'shared-profile' } });
+  values.delete('activeProfileIdV2');
+
+  assert.deepStrictEqual(api.parseManagedCodexMetadata(legacyContent), {
+    profileId: 'shared-profile',
+    model: 'remote-model'
+  });
+  const reconciled = await api.reconcileManagedCodexState(context, legacyFiles);
+  assert(reconciled && reconciled.migrated, 'legacy managed state should be reconciled');
+  assert.deepStrictEqual(api.getActiveTargets(context).codex, {
+    profileId: 'shared-profile',
+    model: 'remote-model'
+  });
+  const reconciledState = JSON.parse(fs.readFileSync(legacyFiles.originalState, 'utf8'));
+  assert.strictEqual(reconciledState.lastAppliedHash, api.contentHash(legacyContent));
+  assert.strictEqual(reconciledState.automaticRefreshDisabled, true, 'legacy config must be adopted without automatic rewriting');
+  assert.strictEqual((await api.getTargetManagementState(context, 'codex', legacyFiles)).status, 'managed-clean');
+
+  values.set('activeCliTargetsV1', {});
+  values.delete('activeProfileIdV2');
+  const recoveredMissingRecord = await api.reconcileManagedCodexState(context, legacyFiles);
+  assert(recoveredMissingRecord, 'a verified state file should recover a missing remote active record');
+  assert.strictEqual(api.getActiveTargets(context).codex.model, 'remote-model');
+
+  values.set('activeCliTargetsV1', {});
+  values.delete('activeProfileIdV2');
+  fs.appendFileSync(legacyFiles.config, '# external edit\n');
+  assert.strictEqual(await api.reconcileManagedCodexState(context, legacyFiles), undefined, 'hash mismatch must block automatic state recovery');
+  assert.strictEqual(api.getActiveTargets(context).codex, undefined, 'hash mismatch must not recreate an active record');
 
   const current = [profile({ selectedModel: 'current-model', models: ['current-model'] })];
   const incoming = [

@@ -212,10 +212,37 @@ async function updateActiveTarget(context, targetId, value) {
 }
 
 async function activeManagedTargetForProfile(context, profileId) {
-  for (const [targetId, active] of Object.entries(getActiveTargets(context))) {
-    if (active && active.profileId === profileId && TARGET_IDS.includes(targetId) && await isTargetManaged(context, targetId)) return targetId;
+  return (await managedTargetsForProfile(context, profileId))[0];
+}
+
+async function managedTargetsForProfile(context, profileId) {
+  const activeTargets = getActiveTargets(context);
+  const result = [];
+  for (const targetId of TARGET_IDS) {
+    const files = pathsForTarget(targetId);
+    const active = activeTargets[targetId];
+    const activeMatches = Boolean(active && active.profileId === profileId);
+    const originalState = await readOriginalState(files);
+    const stateMatches = Boolean(originalState && originalState.profileId === profileId);
+    const metadata = targetId === 'codex'
+      ? parseManagedCodexMetadata(await readConfigText(files.config))
+      : undefined;
+    const configMatches = Boolean(metadata && metadata.profileId === profileId);
+    const evidenceConflicts = Boolean(
+      (originalState && originalState.profileId && originalState.profileId !== profileId)
+      || (metadata && metadata.profileId && metadata.profileId !== profileId)
+    );
+    const activeHasManagedEvidence = activeMatches && !evidenceConflicts && Boolean(
+      metadata
+      || originalState && (
+        originalState.lastAppliedHash
+        || originalState.profileId
+        || !originalState.restoredAt
+      )
+    );
+    if (stateMatches || configMatches || activeHasManagedEvidence) result.push(targetId);
   }
-  return undefined;
+  return result;
 }
 
 async function withTargetMutation(targetId, task) {
@@ -805,6 +832,133 @@ function contentHash(content) {
   return crypto.createHash('sha256').update(String(content || ''), 'utf8').digest('hex');
 }
 
+function parseManagedCodexMetadata(content) {
+  const text = String(content || '');
+  if (!text.includes(MANAGED_MARKER) && !text.includes(OLD_MANAGED_MARKER)) return undefined;
+
+  const profileMatch = text.match(/^#\s*profile_id\s*=\s*([^\r\n]+?)\s*$/m);
+  const rawProfileId = profileMatch && profileMatch[1].trim();
+  const profileId = rawProfileId && /^[A-Za-z0-9_.-]{1,128}$/.test(rawProfileId)
+    ? rawProfileId
+    : undefined;
+  const modelMatch = text.match(/^\s*model\s*=\s*("(?:\\.|[^"\\])*")\s*(?:#.*)?$/m);
+  let model;
+  if (modelMatch) {
+    try {
+      const parsed = JSON.parse(modelMatch[1]);
+      if (typeof parsed === 'string' && parsed.trim() && parsed.length <= 512) model = parsed;
+    } catch {}
+  }
+  return { profileId, model };
+}
+
+function resolveManagedCodexProfile(context, content, originalState, active = getActiveTargets(context).codex) {
+  const metadata = parseManagedCodexMetadata(content);
+  if (!metadata || !originalState) return undefined;
+  const profiles = getProfiles(context);
+  const candidateIds = [metadata.profileId, originalState.profileId, active && active.profileId].filter(Boolean);
+  const profile = candidateIds.map(id => profiles.find(item => item.id === id)).find(Boolean);
+  if (!profile) return undefined;
+
+  // The generated profile_id is the strongest link to the current file. If it
+  // no longer exists, do not guess between similar providers in extension state.
+  if (metadata.profileId && metadata.profileId !== profile.id) return undefined;
+  if (originalState.profileId && originalState.profileId !== profile.id) return undefined;
+  const model = metadata.model || originalState.model || active && active.model || profile.selectedModel;
+  return model ? { metadata, profile, model } : undefined;
+}
+
+function tomlSectionLines(content, sectionName) {
+  const lines = String(content || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  const header = `[${sectionName}]`;
+  const indexes = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index].trim() === header) indexes.push(index);
+  }
+  if (indexes.length !== 1) return undefined;
+  let end = lines.length;
+  for (let index = indexes[0] + 1; index < lines.length; index += 1) {
+    if (/^\s*\[/.test(lines[index])) { end = index; break; }
+  }
+  return lines.slice(indexes[0] + 1, end).map(line => line.trim()).filter(Boolean);
+}
+
+function hasSingleTomlLine(lines, expected, key) {
+  if (!lines) return false;
+  const prefix = `${key} =`;
+  const matches = lines.filter(line => line.startsWith(prefix));
+  return matches.length === 1 && matches[0] === expected;
+}
+
+function canRecreateRuntimeTokenFromManagedConfig(
+  content,
+  profile,
+  tokenPath,
+  management,
+  platform = process.platform
+) {
+  if (platform === 'win32' || !profile || profile.kind !== 'customResponses') return false;
+  const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+  if (authMode !== 'secret' || !management || !management.originalState) return false;
+
+  const metadata = parseManagedCodexMetadata(content);
+  if (!metadata) return false;
+  const stateProfileId = management.originalState.profileId;
+  const activeProfileId = management.active && management.active.profileId;
+  const linkedProfile = Boolean(metadata && metadata.profileId === profile.id)
+    || (management.status === 'managed-clean'
+      && stateProfileId === profile.id
+      && activeProfileId === profile.id);
+  if (!linkedProfile) return false;
+  if (metadata && metadata.profileId && metadata.profileId !== profile.id) return false;
+  if (stateProfileId && stateProfileId !== profile.id) return false;
+
+  const allLines = String(content || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  const firstSection = allLines.findIndex(line => /^\s*\[/.test(line));
+  const rootLines = allLines.slice(0, firstSection < 0 ? allLines.length : firstSection)
+    .map(line => line.trim()).filter(Boolean);
+  const providerId = profile.providerId;
+  const providerLines = tomlSectionLines(content, `model_providers.${providerId}`);
+  const authLines = tomlSectionLines(content, `model_providers.${providerId}.auth`);
+  const auth = authCommandForToken(tokenPath, platform);
+  return hasSingleTomlLine(rootLines, `model_provider = "${tomlString(providerId)}"`, 'model_provider')
+    && hasSingleTomlLine(providerLines, `base_url = "${tomlString(normalizeBaseUrl(profile.baseUrl))}"`, 'base_url')
+    && hasSingleTomlLine(providerLines, 'wire_api = "responses"', 'wire_api')
+    && hasSingleTomlLine(authLines, `command = "${tomlString(auth.command)}"`, 'command')
+    && hasSingleTomlLine(authLines, `args = ${tomlArray(auth.args)}`, 'args');
+}
+
+async function reconcileManagedCodexState(context, files = pathsForCurrentUser()) {
+  const content = await readConfigText(files.config);
+  const metadata = parseManagedCodexMetadata(content);
+  if (!metadata) return undefined;
+
+  const originalState = await readOriginalState(files);
+  if (!originalState) return undefined;
+  const currentHash = contentHash(content);
+  if (originalState.lastAppliedHash && originalState.lastAppliedHash !== currentHash) return undefined;
+
+  const active = getActiveTargets(context).codex;
+  const resolved = resolveManagedCodexProfile(context, content, originalState, active);
+  if (!resolved) return undefined;
+  const { profile, model } = resolved;
+
+  const legacyState = !originalState.lastAppliedHash;
+  if (legacyState || originalState.profileId !== profile.id || originalState.model !== model) {
+    await writeOriginalState(files, originalState.existed, {
+      lastAppliedHash: currentHash,
+      profileId: profile.id,
+      model,
+      automaticRefreshDisabled: legacyState ? true : originalState.automaticRefreshDisabled,
+      migratedAt: legacyState ? new Date().toISOString() : originalState.migratedAt
+    });
+  }
+  if (!active || active.profileId !== profile.id || active.model !== model) {
+    await updateActiveTarget(context, 'codex', { profileId: profile.id, model });
+  }
+  return { profile, model, migrated: legacyState };
+}
+
 async function getTargetManagementState(context, targetId, files = pathsForTarget(targetId)) {
   const normalizedTarget = normalizeTargetId(targetId);
   const active = getActiveTargets(context)[normalizedTarget];
@@ -1041,10 +1195,6 @@ function buildTargetConfig(targetId, profile, model, original) {
   if (targetId === 'openclaw') return buildOpenClawConfig(profile, model, original);
   if (targetId === 'hermes') return buildHermesConfig(profile, model, original);
   throw new Error(`没有 ${targetLabel(targetId)} 配置生成器。`);
-}
-
-async function isTargetManaged(context, targetId, files = pathsForTarget(targetId)) {
-  return (await getTargetManagementState(context, targetId, files)).managed;
 }
 
 async function activateExternalTarget(context, targetId, profile, model) {
@@ -1588,25 +1738,54 @@ async function editProfile(context) {
   });
 }
 
+async function deleteStoredProfile(context, profile, statusBar) {
+  const managedTargets = await managedTargetsForProfile(context, profile.id);
+  const targetNames = managedTargets.map(targetLabel).join(', ');
+  const deleteLabel = managedTargets.length
+    ? uiText('Restore and delete', '恢复并删除')
+    : uiText('Delete', '删除');
+  const message = managedTargets.length
+    ? uiText(
+        `“${profile.name}” is active in ${targetNames}. Restore the original configuration for ${targetNames}, then delete the provider and its saved API key?`,
+        `“${profile.name}”正在被 ${targetNames} 使用。是否先恢复 ${targetNames} 的原配置，再删除该 Provider 及其保存的 API Key？`
+      )
+    : uiText(
+        `Delete “${profile.name}” and its saved API key?`,
+        `确定删除“${profile.name}”及其保存的 API Key 吗？`
+      );
+  const answer = await vscode.window.showWarningMessage(message, { modal: true }, deleteLabel);
+  if (answer !== deleteLabel) return { cancelled: true, restoredTargets: [] };
+
+  const restoredTargets = [];
+  for (const targetId of managedTargets) {
+    const restored = await restoreTarget(context, targetId, statusBar, {
+      showError: false,
+      throwOnError: true,
+      offerReload: false
+    });
+    if (!restored) return { cancelled: true, restoredTargets };
+    restoredTargets.push(targetId);
+  }
+
+  // Remove stale references from targets that were already restored outside
+  // ModelMux before deleting the shared provider record.
+  for (const [targetId, active] of Object.entries(getActiveTargets(context))) {
+    if (active && active.profileId === profile.id && TARGET_IDS.includes(targetId)) {
+      await updateActiveTarget(context, targetId, undefined);
+    }
+  }
+  await saveProfiles(context, getProfiles(context).filter(item => item.id !== profile.id));
+  await context.secrets.delete(secretKey(profile.id));
+  await updateStatusBar(context, statusBar);
+  return { cancelled: false, restoredTargets };
+}
+
 async function deleteProfile(context, statusBar) {
   const profile = await chooseProfile(context, '选择要删除的配置');
   if (!profile) return;
   await withProfileMutation(profile.id, async () => {
-    const activeTarget = await activeManagedTargetForProfile(context, profile.id);
-    if (activeTarget) {
-      await vscode.window.showWarningMessage(`该配置正在被 ${targetLabel(activeTarget)} 使用。请先恢复该 CLI 的原配置或切换到其它 Provider。`);
-      return;
-    }
-    const answer = await vscode.window.showWarningMessage(
-      `确定删除“${profile.name}”及其保存的 API Key 吗？`,
-      { modal: true },
-      '删除'
-    );
-    if (answer !== '删除') return;
-    await saveProfiles(context, getProfiles(context).filter(item => item.id !== profile.id));
-    await context.secrets.delete(secretKey(profile.id));
-    await updateStatusBar(context, statusBar);
-    await vscode.window.showInformationMessage(`已删除“${profile.name}”。`);
+    const result = await deleteStoredProfile(context, profile, statusBar);
+    if (!result.cancelled) await vscode.window.showInformationMessage(`已删除“${profile.name}”。`);
   });
 }
 
@@ -1972,50 +2151,55 @@ function canAutomaticallyRefreshManagedConfig(management) {
     && management.originalState && !management.originalState.automaticRefreshDisabled);
 }
 
-async function recreateRuntimeTokenIfNeeded(context, statusBar) {
+async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = pathsForCurrentUser()) {
   if (!['linux', 'win32', 'darwin'].includes(process.platform)) {
     await updateStatusBar(context, statusBar);
     return;
   }
 
-  const files = pathsForCurrentUser();
   if (!(await isManagedConfig(files.config))) {
     await updateStatusBar(context, statusBar, files);
     return;
   }
 
+  try {
+    await reconcileManagedCodexState(context, files);
+  } catch (error) {
+    console.error('Failed to reconcile managed Codex state:', error);
+  }
+  const content = await readConfigText(files.config);
+  const originalState = await readOriginalState(files);
   const activeRecord = getActiveTargets(context).codex;
-  const profile = getProfiles(context).find(item => activeRecord && item.id === activeRecord.profileId);
-  const activeModel = activeRecord && activeRecord.model;
-  if (!profile || !activeModel) {
+  const resolved = resolveManagedCodexProfile(context, content, originalState, activeRecord);
+  if (!resolved) {
     await updateStatusBar(context, statusBar, files);
     return;
   }
-
-  let originalState = await readOriginalState(files);
-  if (originalState && !originalState.lastAppliedHash && await fileExists(files.config)) {
-    const current = await fs.promises.readFile(files.config, 'utf8');
-    await writeOriginalState(files, originalState.existed, {
-      lastAppliedHash: contentHash(current),
-      profileId: profile.id,
-      model: activeModel,
-      automaticRefreshDisabled: true,
-      migratedAt: new Date().toISOString()
-    });
-    originalState = await readOriginalState(files);
-  }
-
-  const management = await getTargetManagementState(context, 'codex', files);
-  if (!canAutomaticallyRefreshManagedConfig(management)) {
-    await updateStatusBar(context, statusBar, files);
-    return;
-  }
+  const { profile, model } = resolved;
 
   const activeAuthMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
   let resolvedSecret;
   if (profile.kind === 'customResponses' && activeAuthMode === 'secret') {
     resolvedSecret = await context.secrets.get(secretKey(profile.id));
-    if (resolvedSecret && process.platform !== 'win32') {
+  }
+
+  const management = await getTargetManagementState(context, 'codex', files);
+  const currentContent = await readConfigText(files.config);
+  const contentStillMatchesState = Boolean(
+    management.originalState
+    && management.originalState.lastAppliedHash
+    && contentHash(currentContent) === management.originalState.lastAppliedHash
+  );
+  const canRefreshConfig = canAutomaticallyRefreshManagedConfig(management) && contentStillMatchesState;
+
+  if (profile.kind === 'customResponses' && activeAuthMode === 'secret') {
+    const canRestoreToken = canRefreshConfig || canRecreateRuntimeTokenFromManagedConfig(
+      currentContent,
+      profile,
+      files.token,
+      management
+    );
+    if (resolvedSecret && process.platform !== 'win32' && canRestoreToken) {
       try {
         await writeRuntimeToken(files.token, resolvedSecret);
       } catch (error) {
@@ -2028,15 +2212,24 @@ async function recreateRuntimeTokenIfNeeded(context, statusBar) {
     await removeRuntimeToken(files.token);
   }
 
+  if (!canRefreshConfig) {
+    await updateStatusBar(context, statusBar, files);
+    return;
+  }
+
   try {
-    const desired = buildManagedConfig(profile, activeModel, files.token, resolvedSecret);
+    const desired = buildManagedConfig(profile, model, files.token, resolvedSecret);
     const current = await readConfigText(files.config);
+    if (contentHash(current) !== management.originalState.lastAppliedHash) {
+      await updateStatusBar(context, statusBar, files);
+      return;
+    }
     if (current !== desired) {
       await writeAtomic(files.config, desired);
       await writeOriginalState(files, originalState.existed, {
         lastAppliedHash: contentHash(desired),
         profileId: profile.id,
-        model: activeModel,
+        model,
         updatedAt: new Date().toISOString()
       });
     }
@@ -2045,6 +2238,13 @@ async function recreateRuntimeTokenIfNeeded(context, statusBar) {
   }
 
   await updateStatusBar(context, statusBar, files);
+}
+
+async function recreateRuntimeTokenIfNeeded(context, statusBar, files = pathsForCurrentUser()) {
+  return withProfileMutation('codex-runtime-refresh', () => withTargetMutation(
+    'codex',
+    () => recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files)
+  ));
 }
 
 function executableCandidates(name) {
@@ -2740,7 +2940,7 @@ async function getDashboardState(context) {
       unsupportedCode: compatibility.code,
       unsupportedReason: compatibility.reason,
       canEdit: !activeTargetId,
-      canDelete: !activeTargetId,
+      canDelete: true,
       canClearSecret: !activeTargetId && requiresSecret,
       canApply: compatibility.supported && management.canApply
     });
@@ -3005,24 +3205,11 @@ class DashboardViewProvider {
         case 'deleteProfile': {
           const profile = getProfiles(this.context).find(item => item.id === message.profileId);
           if (!profile) throw new Error(uiText('Provider not found.', '未找到 Provider。'));
-          let cancelled = false;
+          let result;
           await withProfileMutation(profile.id, async () => {
-            const activeTarget = await activeManagedTargetForProfile(this.context, profile.id);
-            if (activeTarget) throw new Error(uiText(
-              `This provider is active in ${targetLabel(activeTarget)}. Restore or switch providers before deleting it.`,
-              `该 Provider 正在被 ${targetLabel(activeTarget)} 使用，请先恢复该 CLI 的原配置或切换到其它 Provider。`
-            ));
-            const deleteLabel = uiText('Delete', '删除');
-            const answer = await vscode.window.showWarningMessage(
-              uiText(`Delete “${profile.name}” and its saved API key?`, `确定删除“${profile.name}”及其保存的 API Key 吗？`),
-              { modal: true },
-              deleteLabel
-            );
-            if (answer !== deleteLabel) { cancelled = true; return; }
-            await saveProfiles(this.context, getProfiles(this.context).filter(item => item.id !== profile.id));
-            await this.context.secrets.delete(secretKey(profile.id));
+            result = await deleteStoredProfile(this.context, profile, this.statusBar);
           });
-          if (cancelled) {
+          if (!result || result.cancelled) {
             await this.respond(requestId, true, { cancelled: true });
             return;
           }
@@ -3190,6 +3377,11 @@ async function openDashboard() {
 /** @param {vscode.ExtensionContext} context */
 async function activate(context) {
   await migrateLegacyProfile(context);
+  try {
+    await reconcileManagedCodexState(context);
+  } catch (error) {
+    console.error('Failed to reconcile managed Codex state:', error);
+  }
 
   const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'codexConfigSwitcher.openDashboard';
@@ -3277,6 +3469,11 @@ module.exports = {
     getActiveTargets,
     updateActiveTarget,
     contentHash,
+    parseManagedCodexMetadata,
+    reconcileManagedCodexState,
+    canRecreateRuntimeTokenFromManagedConfig,
+    recreateRuntimeTokenIfNeeded,
+    deleteStoredProfile,
     withTargetMutation,
     withProfileMutation,
     readGlobalSettings,

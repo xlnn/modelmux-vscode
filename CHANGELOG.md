@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0
+
+- 修复 Remote-SSH/Linux 扩展主机重连后活动状态与运行时 Token 丢失的问题；从通过完整性校验的 Codex 配置元数据和状态文件恢复托管状态。
+- 配置发生外部修改时继续拒绝恢复活动状态和自动重写；仅在 Provider 身份、目标地址、协议与 Token helper 路径仍匹配时安全补建私有运行时 Token。
+- 支持删除正在使用的 Provider：确认后先恢复所有关联 CLI 的原配置，再删除 Provider 及保存的 API Key；恢复失败或取消时保留 Provider。
+- Provider 关联关系同时依据活动记录、完整性状态和 Codex 配置元数据识别，覆盖远程活动记录或托管配置文件缺失的情况。
+- 启动凭据恢复与 Provider/CLI 修改统一串行，并在写入前再次校验配置哈希，避免删除或外部修改竞态。
+- 修复短侧边栏中 Provider 操作菜单显示不全的问题；菜单随列表项展开、自动滚入视口，并在空间不足时独立滚动。
+
+## 1.2.1
+
+- 维护版本发布，功能基线延续 1.2.0。
+
 ## 1.2.0
 
 - 将 `codexConfigSwitcher.approvalPolicy` 与 `codexConfigSwitcher.sandboxMode` 设为机器级配置，并在扩展清单中限制不受信任工作区修改这两项。
@@ -12,7 +25,7 @@
 - 开发与发布升级到 Node.js 22，bundle 继续以 Node 20 为目标；新增 Ubuntu、Windows、macOS 的 pull request 与 `main` push CI，统一运行安装、检查、测试和构建。
 - 新增导出脱敏、Webview CSP/DOM/可访问性与导入冲突 smoke test，并在构建时同步 Codicon CSS/字体运行时资源。
 - VSIX 文件名改为从包版本动态生成 `modelmux-${npm_package_version}.vsix`。
-- 保留包名 `codex-config-switcher` 与 Publisher `cherry-local`，Marketplace 扩展 ID 与 1.1.2 相同；更早的 `cherry-local.codex-config-switcher` 属于不同扩展身份，需要导出/导入 Provider 并重新录入密钥。
+- 保留包名 `codex-config-switcher` 与 Publisher `cherry-local`，Marketplace 扩展 ID 与 1.1.2 相同；更早的 `lichao-local.codex-config-switcher` 属于不同扩展身份，需要导出/导入 Provider 并重新录入密钥。
 
 ## 1.1.2
 

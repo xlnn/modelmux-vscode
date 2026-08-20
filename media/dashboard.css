@@ -341,7 +341,15 @@ input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="
 .provider-controls select { flex: 1 1 auto; min-width: 0; }
 .provider-controls .primary { flex: 0 0 auto; }
 .provider-controls .icon-button { flex: 0 0 28px; }
-.provider-row .menu { position: absolute; top: 36px; right: 4px; }
+.provider-row .menu {
+  position: static;
+  width: calc(100% - 31px);
+  max-height: calc(100vh - 16px);
+  margin: 7px 0 0 31px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 
 button.primary, button.secondary {
   display: inline-flex;

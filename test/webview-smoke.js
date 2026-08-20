@@ -92,6 +92,9 @@ try {
   }
   assert(dashboardSource.includes("request('previewRestore'"), 'restore preview must use the validated message boundary');
   assert(dashboardSource.includes("request('commitImport', { importId: importSession.importId, strategy })"), 'import commit must use the server-held preview and explicit conflict strategy');
+  assert(dashboardSource.includes("menu.scrollIntoView({ block: 'nearest', inline: 'nearest' })"), 'expanded provider menus must scroll fully into view');
+  assert(/\.provider-row \.menu\s*\{[\s\S]*position:\s*static/.test(dashboardCss), 'provider menus must expand their row instead of being clipped overlays');
+  assert(/\.provider-row \.menu\s*\{[\s\S]*overflow-y:\s*auto/.test(dashboardCss), 'provider menus must remain scrollable in short Webviews');
   assert(/:focus-visible/.test(dashboardCss), 'keyboard focus must remain visible');
   assert(dashboardCss.includes('vscode-high-contrast-light'), 'high contrast light theme must receive explicit borders and focus styles');
   assert(dashboardCss.includes('prefers-reduced-motion'), 'dashboard must respect reduced-motion preferences');
