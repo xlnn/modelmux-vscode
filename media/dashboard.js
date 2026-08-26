@@ -66,7 +66,7 @@
       connectionLmStudio: 'Uses the built-in Codex LM Studio provider.', connectionNative: 'Uses existing {kind} credentials or standard environment variables.',
       activeConfiguration: 'Active configuration', configurationStatus: 'Configuration status', noModelSelected: 'No model selected',
       statusManagedClean: 'Configuration is managed and current', statusManagedCleanDetail: '{provider} is applied to {target}.',
-      statusManagedDrifted: 'Managed configuration was changed externally', statusManagedDriftedDetail: 'Reapply the provider or inspect diagnostics before restoring.',
+      statusManagedDrifted: 'Managed configuration was changed externally', statusManagedDriftedDetail: 'Preview the changes or reapply the provider. Reapplying requires confirmation.',
       statusManagedOrphaned: 'Managed configuration has no matching provider', statusManagedOrphanedDetail: 'The active record is missing. Run diagnostics before making changes.',
       statusBackupMissing: 'Original backup is missing', statusBackupMissingDetail: 'Restore is unavailable until the original state can be recovered.',
       statusOriginal: 'Using the original {target} configuration', statusOriginalDetail: 'Choose a compatible provider to manage this CLI.',
@@ -146,7 +146,7 @@
       connectionOllama: '使用 Codex 内置 Ollama Provider。', connectionLmStudio: '使用 Codex 内置 LM Studio Provider。',
       connectionNative: '使用 {kind} 的已有凭据或标准环境变量。', activeConfiguration: '活动配置', configurationStatus: '配置状态',
       noModelSelected: '未选择模型', statusManagedClean: '托管配置完整且为最新状态', statusManagedCleanDetail: '{provider} 已应用到 {target}。',
-      statusManagedDrifted: '托管配置已被外部修改', statusManagedDriftedDetail: '恢复前请重新应用 Provider 或检查环境自检。',
+      statusManagedDrifted: '托管配置已被外部修改', statusManagedDriftedDetail: '可先预览变化，或在确认后重新应用 Provider。',
       statusManagedOrphaned: '托管配置缺少对应 Provider', statusManagedOrphanedDetail: '活动记录已丢失；继续修改前请运行环境自检。',
       statusBackupMissing: '原始备份缺失', statusBackupMissingDetail: '恢复原配置暂不可用，请先找回原始状态。',
       statusOriginal: '正在使用 {target} 原始配置', statusOriginalDetail: '选择兼容的 Provider 后即可管理此 CLI。',
@@ -514,7 +514,12 @@
     const targetId = state.selectedTargetId;
     const targetName = state.targetLabel;
     try {
-      await busy(button, () => request('activateProfile', { targetId, profileId: profile.id, model: select.value }), $('providerList'));
+      const result = await busy(button, () => request('activateProfile', { targetId, profileId: profile.id, model: select.value }), $('providerList'));
+      if (result.status === 'cancelled') {
+        toast(t('operationCancelled'));
+        announce(t('operationCancelled'));
+        return;
+      }
       toast(t('activatedToast', { target: targetName, model: select.value }));
     } catch (error) { reportOperationError(error); }
   }
@@ -657,7 +662,7 @@
     ]));
 
     const activateButton = create('button', {
-      className: 'primary', type: 'button', text: profile.active ? t('reapply') : t('activate'),
+      className: 'primary', type: 'button', text: profile.managedForSelectedTarget ? t('reapply') : t('activate'),
       disabled: select.disabled || !profile.supported || !canApply,
       title: !profile.supported ? compatibilityReason(profile) : canApply ? t('enableFor', { target: state.targetLabel }) : t('applyUnavailable')
     });
@@ -668,7 +673,7 @@
 
   function filteredProfiles() {
     const query = searchText.trim().toLowerCase();
-    const profiles = (state.profiles || []).slice().sort((a, b) => Number(b.active) - Number(a.active));
+    const profiles = (state.profiles || []).slice().sort((a, b) => Number(b.managedForSelectedTarget || b.active) - Number(a.managedForSelectedTarget || a.active));
     if (!query) return profiles;
     return profiles.filter(profile => [profile.name, profile.providerId, profile.baseUrl, profile.envKey, profile.selectedModel, ...(profile.models || [])]
       .some(value => String(value || '').toLowerCase().includes(query)));

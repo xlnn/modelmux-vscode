@@ -87,6 +87,8 @@ try {
   assert(ids.includes('diagnosticsDialog'), 'structured diagnostics dialog is missing');
   assert(ids.includes('importStrategy'), 'import conflict strategy control is missing');
   assert(dashboardSource.includes('managementStatus'), 'dashboard must render explicit target management states');
+  assert(dashboardSource.includes('profile.managedForSelectedTarget ? t(\'reapply\') : t(\'activate\')'), 'a drifted managed provider must expose the reapply action');
+  assert(dashboardSource.includes("result.status === 'cancelled'"), 'cancelled reapply confirmation must not be reported as an activation failure');
   for (const capability of ['canRestore', 'canApply', 'canEdit', 'canDelete', 'canClearSecret']) {
     assert(dashboardSource.includes(capability), `dashboard does not consume ${capability}`);
   }

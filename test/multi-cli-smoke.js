@@ -183,6 +183,15 @@ try {
     assert(!values.get('modelProfilesV2').some(item => item.id === customChat.id), 'provider must be deleted after restore');
 
     await api.activateExternalTarget(context, 'openclaw', driftChat, 'chat-model');
+    fs.appendFileSync(openClawFiles.config, '// first external edit\n');
+    const reapplied = await api.activateExternalTarget(context, 'openclaw', driftChat, 'chat-model');
+    assert(reapplied, 'confirmed drift reapply must complete');
+    assert.strictEqual(
+      (await api.getTargetManagementState(context, 'openclaw', openClawFiles)).status,
+      'managed-clean',
+      'confirmed reapply must replace the drift and record the new content hash'
+    );
+    assert(!fs.readFileSync(openClawFiles.config, 'utf8').includes('first external edit'));
     await api.updateActiveTarget(context, 'openclaw', undefined);
     fs.appendFileSync(openClawFiles.config, '// external edit\n');
     const driftDeletion = await api.deleteStoredProfile(context, driftChat, statusBar);

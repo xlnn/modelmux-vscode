@@ -9,13 +9,20 @@ const Module = require('module');
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'modelmux-security-test-'));
 const previousOpenCodeDir = process.env.OPENCODE_CONFIG_DIR;
 process.env.OPENCODE_CONFIG_DIR = path.join(sandbox, 'missing-opencode-home');
+const warningMessages = [];
+let acceptWarning = true;
 
 const mockVscode = {
   env: { remoteName: undefined },
   workspace: {
     getConfiguration() { return { get(_key, fallback) { return fallback; } }; }
   },
-  window: {},
+  window: {
+    async showWarningMessage(...args) {
+      warningMessages.push(args);
+      return acceptWarning ? args.at(-1) : undefined;
+    }
+  },
   commands: {},
   Uri: { file(value) { return { fsPath: value }; } }
 };
@@ -63,6 +70,8 @@ function plannedProfiles(plan) {
     'createImportPlan',
     'applyImportPlan',
     'getTargetManagementState',
+    'assertTargetCanApply',
+    'assertTargetSnapshotUnchanged',
     'canAutomaticallyRefreshManagedConfig',
     'parseManagedCodexMetadata',
     'reconcileManagedCodexState',
@@ -174,8 +183,29 @@ function plannedProfiles(plan) {
   fs.writeFileSync(managedFiles.config, `${managedContent}# external edit\n`);
   const drifted = await api.getTargetManagementState(context, 'codex', managedFiles);
   assert.strictEqual(drifted.status, 'managed-drifted');
-  assert.strictEqual(drifted.canApply, false, 'Codex hash collisions must block automatic replacement');
+  assert.strictEqual(drifted.canApply, true, 'a drifted config must allow an explicit reapply flow');
+  assert.strictEqual(drifted.requiresApplyConfirmation, true);
   assert.strictEqual(api.canAutomaticallyRefreshManagedConfig(drifted), false);
+  acceptWarning = false;
+  assert.strictEqual(
+    await api.assertTargetCanApply(context, 'codex', managedFiles, true),
+    undefined,
+    'cancelling the drift warning must leave the configuration untouched'
+  );
+  acceptWarning = true;
+  const confirmedDrift = await api.assertTargetCanApply(context, 'codex', managedFiles, true);
+  assert.strictEqual(confirmedDrift.status, 'managed-drifted');
+  assert(
+    warningMessages.some(args => String(args[0]).includes('重新应用') || String(args[0]).includes('Reapplying')),
+    'reapply must explain that the current file will be replaced'
+  );
+  await api.assertTargetSnapshotUnchanged(confirmedDrift, managedFiles);
+  fs.appendFileSync(managedFiles.config, '# changed again after confirmation\n');
+  await assert.rejects(
+    api.assertTargetSnapshotUnchanged(confirmedDrift, managedFiles),
+    /发生了变化|changed/,
+    'a second external edit after confirmation must abort the write'
+  );
 
   const tokenPath = '/run/user/1000/codex-model-profile-token-1000';
   const tokenAuth = api.authCommandForToken(tokenPath, 'linux');

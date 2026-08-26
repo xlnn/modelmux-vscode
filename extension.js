@@ -972,7 +972,7 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
 
   let status = 'original';
   let currentHash;
-  if (configExists && hasManagedRecord) {
+  if (configExists) {
     currentHash = contentHash(await fs.promises.readFile(files.config, 'utf8'));
   }
   if ((active || markerManaged || hasManagedRecord) && (!active || !originalState || !hasManagedRecord || !configExists)) {
@@ -994,7 +994,11 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
     currentHash,
     managed: status !== 'original',
     canRestore: Boolean(originalState && (!originalState.existed || backupExists)),
-    canApply: status === 'original' || status === 'managed-clean'
+    // A drifted file may be deliberately replaced, but only after the
+    // activation path obtains explicit confirmation. Automatic refresh stays
+    // disabled because it uses the stricter managed-clean status.
+    canApply: status === 'original' || status === 'managed-clean' || status === 'managed-drifted',
+    requiresApplyConfirmation: status === 'managed-drifted'
   };
 }
 
@@ -1018,8 +1022,22 @@ async function assertManagedContentUnchanged(context, targetId, files, allowConf
   return management;
 }
 
-async function assertTargetCanApply(context, targetId, files) {
-  const management = await assertManagedContentUnchanged(context, targetId, files, false);
+async function assertTargetCanApply(context, targetId, files, allowDriftConfirmation = false) {
+  const management = await getTargetManagementState(context, targetId, files);
+  if (management.status === 'managed-drifted') {
+    if (!allowDriftConfirmation) {
+      throw new Error(`${targetLabel(targetId)} 配置在 ModelMux 写入后已被其它程序修改。重新应用前需要明确确认，以免覆盖外部改动。`);
+    }
+    const reapplyLabel = uiText('Reapply provider', '重新应用 Provider');
+    const answer = await vscode.window.showWarningMessage(
+      uiText(
+        `${targetLabel(targetId)} configuration changed after ModelMux last wrote it. Reapplying will replace the current file; the recorded original backup will be kept.`,
+        `${targetLabel(targetId)} 配置在 ModelMux 上次写入后发生了变化。重新应用会替换当前文件，但已记录的原始备份会保留。`
+      ),
+      { modal: true }, reapplyLabel
+    );
+    if (answer !== reapplyLabel) return undefined;
+  }
   if (management.status === 'managed-orphaned') {
     throw new Error(`${targetLabel(targetId)} 的托管配置或活动记录不完整。请先运行诊断并恢复原配置。`);
   }
@@ -1027,6 +1045,18 @@ async function assertTargetCanApply(context, targetId, files) {
     throw new Error(`${targetLabel(targetId)} 的原始备份缺失。为避免不可逆覆盖，ModelMux 已停止写入。`);
   }
   return management;
+}
+
+async function assertTargetSnapshotUnchanged(management, files) {
+  const existsNow = await fileExists(files.config);
+  if (existsNow !== management.configExists) {
+    throw new Error(`${files.config} 在确认应用后又发生了变化。为避免覆盖新的外部改动，本次应用已停止，请重试。`);
+  }
+  if (!existsNow) return;
+  const currentHash = contentHash(await fs.promises.readFile(files.config, 'utf8'));
+  if (currentHash !== management.currentHash) {
+    throw new Error(`${files.config} 在确认应用后又发生了变化。为避免覆盖新的外部改动，本次应用已停止，请重试。`);
+  }
 }
 
 async function originalContentForTarget(files) {
@@ -1201,8 +1231,10 @@ async function activateExternalTarget(context, targetId, profile, model) {
   const compatibility = targetCompatibility(targetId, profile);
   if (!compatibility.supported) throw new Error(compatibility.reason);
   const files = pathsForTarget(targetId);
-  await assertTargetCanApply(context, targetId, files);
+  const management = await assertTargetCanApply(context, targetId, files, true);
+  if (!management) return false;
   await ensureOriginalBackup(files);
+  await assertTargetSnapshotUnchanged(management, files);
   const original = await originalContentForTarget(files);
   const content = buildTargetConfig(targetId, profile, model, original);
   await writeAtomic(files.config, content);
@@ -1880,7 +1912,8 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
 
   const files = pathsForCurrentUser();
   try {
-    await assertTargetCanApply(context, 'codex', files);
+    const management = await assertTargetCanApply(context, 'codex', files, true);
+    if (!management) return false;
     const createdBackup = await ensureOriginalBackup(files);
 
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
@@ -1889,15 +1922,16 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
       resolvedSecret = await context.secrets.get(secretKey(profile.id));
       if (!resolvedSecret) resolvedSecret = await promptForApiKey(context, profile, false);
       if (!resolvedSecret) return false;
-      if (process.platform === 'win32') {
-        // Windows compatibility path writes the bearer token into the managed,
-        // user-only config because command-backed auth is unreliable in some
-        // bundled Windows Codex versions.
-        await removeRuntimeToken(files.token);
-      } else {
-        await writeRuntimeToken(files.token, resolvedSecret);
-      }
+    }
+
+    // Recheck after any confirmation or credential prompt, before changing the
+    // runtime credential or the managed file.
+    await assertTargetSnapshotUnchanged(management, files);
+    if (profile.kind === 'customResponses' && authMode === 'secret' && process.platform !== 'win32') {
+      await writeRuntimeToken(files.token, resolvedSecret);
     } else {
+      // Windows embeds the bearer in the ACL-restricted managed config because
+      // command-backed auth is unreliable in some bundled Codex versions.
       await removeRuntimeToken(files.token);
     }
 
@@ -2924,6 +2958,7 @@ async function getDashboardState(context) {
         : undefined;
     const compatibility = targetCompatibility(selectedTargetId, profile);
     const active = management.status === 'managed-clean' && profile.id === activeId;
+    const managedForSelectedTarget = Boolean(management.managed && profile.id === activeId);
     const activeTargetId = await activeManagedTargetForProfile(context, profile.id);
     items.push({
       ...profile,
@@ -2932,6 +2967,7 @@ async function getDashboardState(context) {
       kindLabel: kindLabel(profile.kind),
       description: providerDescription(profile),
       active,
+      managedForSelectedTarget,
       activeTargetId,
       requiresSecret,
       hasSecret,
@@ -3172,9 +3208,12 @@ class DashboardViewProvider {
             String(message.model || '').trim() || undefined,
             { showError: false, throwOnError: true, offerReload: false }
           );
-          if (!result) throw new Error(uiText('Activation was cancelled.', '启用操作已取消。'));
+          if (!result) {
+            await this.respond(requestId, true, { status: 'cancelled' });
+            return;
+          }
           await this.refresh();
-          await this.respond(requestId, true, {});
+          await this.respond(requestId, true, { status: 'completed' });
           if (targetId === 'codex') void offerReload(uiText(
             `Enabled “${result.profile.name} / ${result.model}”. New sessions will use this configuration.`,
             `已启用“${result.profile.name} / ${result.model}”。${result.backupText}`
@@ -3480,6 +3519,8 @@ module.exports = {
     getTargetManagementState,
     canAutomaticallyRefreshManagedConfig,
     assertManagedContentUnchanged,
+    assertTargetCanApply,
+    assertTargetSnapshotUnchanged,
     exportableProfile,
     createImportPlan,
     applyImportPlan,
