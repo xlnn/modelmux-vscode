@@ -127,9 +127,6 @@ const api = extension.__test;
   fs.unlinkSync(files.token);
   await api.writeRuntimeToken(files.token, key);
 
-  values.set('modelProfilesV2', [profile]);
-  values.set('activeProfileIdV2', profile.id);
-  secrets.set(`modelProfileApiKey:${profile.id}`, key);
   fs.writeFileSync(files.originalState, JSON.stringify({
     existed: true,
     lastAppliedHash: api.contentHash(config),
@@ -146,8 +143,11 @@ const api = extension.__test;
       async store(name, value) { secrets.set(name, value); },
       async delete(name) { secrets.delete(name); }
     },
-    extension: { packageJSON: { version: '1.3.1' }, id: 'cherry-local.codex-config-switcher' }
+    extension: { packageJSON: { version: '1.3.2' }, id: 'cherry-local.codex-config-switcher' }
   };
+  values.set(api.environmentStateKey(context, 'modelProfilesV2'), [profile]);
+  values.set(api.environmentStateKey(context, 'activeProfileIdV2'), profile.id);
+  secrets.set(api.profileSecretKey(context, profile.id), key);
 
   const diagnostics = await api.collectDiagnostics(context);
   assert.strictEqual(diagnostics.failed, 0, JSON.stringify(diagnostics.checks, null, 2));
@@ -155,8 +155,8 @@ const api = extension.__test;
   const driftedConfig = `${config}# harmless external comment\n`;
   fs.writeFileSync(files.config, driftedConfig);
   await api.removeRuntimeToken(files.token);
-  values.delete('activeProfileIdV2');
-  values.set('activeCliTargetsV1', {});
+  values.delete(api.environmentStateKey(context, 'activeProfileIdV2'));
+  values.set(api.environmentStateKey(context, 'activeCliTargetsV1'), {});
   const statusBar = { show() {}, text: '', tooltip: '' };
   await api.recreateRuntimeTokenIfNeeded(context, statusBar, files);
   assert.strictEqual(fs.readFileSync(files.token, 'utf8'), key, 'drifted managed config must recreate its verified private runtime token');

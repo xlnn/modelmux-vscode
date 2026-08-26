@@ -14,6 +14,7 @@ const changelog = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
 assert.strictEqual(manifest.publisher, 'cherry-local');
 assert.strictEqual(manifest.name, 'codex-config-switcher', 'the existing extension ID must remain stable for upgrades');
 assert.strictEqual(manifest.displayName, 'ModelMux: AI CLI Model Manager');
+assert.deepStrictEqual(manifest.extensionKind, ['workspace'], 'ModelMux must run in the workspace Extension Host');
 assert.match(manifest.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, 'extension version must be valid SemVer');
 assert.strictEqual(lockfile.version, manifest.version, 'package-lock version must match package.json');
 assert.strictEqual(lockfile.packages[''].version, manifest.version, 'root lockfile package version must match package.json');

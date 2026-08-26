@@ -109,7 +109,7 @@ try {
   assert.strictEqual(api.targetCompatibility('codex', customChat).supported, false);
   assert.strictEqual(api.targetCompatibility('claude', customAnthropic).supported, true);
 
-  const values = new Map([['modelProfilesV2', [grok, customChat, driftChat, missingConfigChat]]]);
+  const values = new Map();
   const context = {
     globalState: {
       get(key, fallback) { return values.has(key) ? values.get(key) : fallback; },
@@ -117,6 +117,8 @@ try {
     },
     secrets: { async delete() {} }
   };
+  const profilesStateKey = api.environmentStateKey(context, 'modelProfilesV2');
+  values.set(profilesStateKey, [grok, customChat, driftChat, missingConfigChat]);
   const statusBar = { show() {}, text: '', tooltip: '' };
   const grokFiles = api.pathsForTarget('grok');
   const openClawFiles = api.pathsForTarget('openclaw');
@@ -180,7 +182,7 @@ try {
     assert.deepStrictEqual(deletion.restoredTargets, ['openclaw']);
     assert.strictEqual(fs.readFileSync(openClawFiles.config, 'utf8'), originalOpenClaw, 'deleting an active provider must restore the target first');
     assert(!api.getActiveTargets(context).openclaw);
-    assert(!values.get('modelProfilesV2').some(item => item.id === customChat.id), 'provider must be deleted after restore');
+    assert(!values.get(profilesStateKey).some(item => item.id === customChat.id), 'provider must be deleted after restore');
 
     await api.activateExternalTarget(context, 'openclaw', driftChat, 'chat-model');
     fs.appendFileSync(openClawFiles.config, '// first external edit\n');
@@ -202,7 +204,7 @@ try {
       originalOpenClaw,
       'disk state must identify a provider when its active record is missing and config drifted'
     );
-    assert(!values.get('modelProfilesV2').some(item => item.id === driftChat.id));
+    assert(!values.get(profilesStateKey).some(item => item.id === driftChat.id));
 
     await api.activateExternalTarget(context, 'openclaw', missingConfigChat, 'chat-model');
     fs.rmSync(openClawFiles.config);
@@ -214,7 +216,7 @@ try {
       originalOpenClaw,
       'a missing managed config must be restored from backup before deleting its provider'
     );
-    assert(!values.get('modelProfilesV2').some(item => item.id === missingConfigChat.id));
+    assert(!values.get(profilesStateKey).some(item => item.id === missingConfigChat.id));
     console.log('PASS: Claude, Gemini, Grok, OpenCode, OpenClaw and Hermes adapters with isolated restore.');
   })().finally(() => {
     Module._load = originalLoad;

@@ -147,6 +147,7 @@ function plannedProfiles(plan) {
     },
     secrets: { async get() { return undefined; } }
   };
+  const stateKey = key => api.environmentStateKey(context, key);
   const diagnostics = await api.collectTargetDiagnostics(context, 'opencode');
   assert(diagnostics && Array.isArray(diagnostics.checks));
   assert(!fs.existsSync(missingDirectory), 'read-only diagnostics must not create a missing CLI configuration directory');
@@ -168,7 +169,7 @@ function plannedProfiles(plan) {
     profileId: 'shared-profile',
     model: 'gpt-5'
   }));
-  values.set('activeCliTargetsV1', {
+  values.set(stateKey('activeCliTargetsV1'), {
     codex: { profileId: 'shared-profile', model: 'gpt-5' }
   });
   const clean = await api.getTargetManagementState(context, 'codex', managedFiles);
@@ -285,10 +286,7 @@ function plannedProfiles(plan) {
     profileId: raceProfile.id,
     model: 'race-model'
   }));
-  const raceValues = new Map([
-    ['modelProfilesV2', [raceProfile]],
-    ['activeCliTargetsV1', { codex: { profileId: raceProfile.id, model: 'race-model' } }]
-  ]);
+  const raceValues = new Map();
   let releaseSecret;
   let markSecretRead;
   const secretRead = new Promise(resolve => { markSecretRead = resolve; });
@@ -306,6 +304,10 @@ function plannedProfiles(plan) {
       }
     }
   };
+  raceValues.set(api.environmentStateKey(raceContext, 'modelProfilesV2'), [raceProfile]);
+  raceValues.set(api.environmentStateKey(raceContext, 'activeCliTargetsV1'), {
+    codex: { profileId: raceProfile.id, model: 'race-model' }
+  });
   const raceStatusBar = { show() {}, text: '', tooltip: '' };
   const startupRefresh = api.recreateRuntimeTokenIfNeeded(raceContext, raceStatusBar, raceFiles);
   await secretRead;
@@ -327,6 +329,44 @@ function plannedProfiles(plan) {
     'startup refresh must not overwrite an external edit made after its initial hash check'
   );
 
+  const orphanDir = path.join(sandbox, 'orphaned-remote-management');
+  const orphanFiles = {
+    targetId: 'codex',
+    configDir: orphanDir,
+    codexDir: orphanDir,
+    config: path.join(orphanDir, 'config.toml'),
+    backup: path.join(orphanDir, 'config.toml.backup'),
+    originalState: path.join(orphanDir, 'config.toml.state.json'),
+    token: path.join(orphanDir, 'runtime-token')
+  };
+  fs.mkdirSync(orphanDir, { recursive: true });
+  const orphanContent = [
+    '# Managed by Codex Model Profile Manager',
+    '# profile_id = provider-from-another-host',
+    'model = "remote-model"',
+    'model_provider = "gateway"',
+    ''
+  ].join('\n');
+  fs.writeFileSync(orphanFiles.config, orphanContent);
+  fs.writeFileSync(orphanFiles.originalState, JSON.stringify({
+    existed: false,
+    lastAppliedHash: api.contentHash(orphanContent),
+    profileId: 'provider-from-another-host',
+    model: 'remote-model'
+  }));
+  fs.writeFileSync(orphanFiles.token, 'credential-from-another-host');
+  const orphanValues = new Map();
+  const orphanContext = {
+    globalState: {
+      get(key, fallback) { return orphanValues.has(key) ? orphanValues.get(key) : fallback; },
+      async update(key, value) { if (value === undefined) orphanValues.delete(key); else orphanValues.set(key, value); }
+    },
+    secrets: { async get() { return undefined; } }
+  };
+  await api.recreateRuntimeTokenIfNeeded(orphanContext, raceStatusBar, orphanFiles);
+  assert(!fs.existsSync(orphanFiles.token), 'an orphaned provider must not retain a runtime credential from another host scope');
+  assert.strictEqual(fs.readFileSync(orphanFiles.config, 'utf8'), orphanContent, 'orphan cleanup must not overwrite the managed config');
+
   const legacyDir = path.join(sandbox, 'legacy-codex-management');
   fs.mkdirSync(legacyDir, { recursive: true });
   const legacyFiles = {
@@ -346,9 +386,9 @@ function plannedProfiles(plan) {
   ].join('\n');
   fs.writeFileSync(legacyFiles.config, legacyContent);
   fs.writeFileSync(legacyFiles.originalState, JSON.stringify({ existed: false }));
-  values.set('modelProfilesV2', [profile()]);
-  values.set('activeCliTargetsV1', { codex: { profileId: 'shared-profile' } });
-  values.delete('activeProfileIdV2');
+  values.set(stateKey('modelProfilesV2'), [profile()]);
+  values.set(stateKey('activeCliTargetsV1'), { codex: { profileId: 'shared-profile' } });
+  values.delete(stateKey('activeProfileIdV2'));
 
   assert.deepStrictEqual(api.parseManagedCodexMetadata(legacyContent), {
     profileId: 'shared-profile',
@@ -365,14 +405,14 @@ function plannedProfiles(plan) {
   assert.strictEqual(reconciledState.automaticRefreshDisabled, true, 'legacy config must be adopted without automatic rewriting');
   assert.strictEqual((await api.getTargetManagementState(context, 'codex', legacyFiles)).status, 'managed-clean');
 
-  values.set('activeCliTargetsV1', {});
-  values.delete('activeProfileIdV2');
+  values.set(stateKey('activeCliTargetsV1'), {});
+  values.delete(stateKey('activeProfileIdV2'));
   const recoveredMissingRecord = await api.reconcileManagedCodexState(context, legacyFiles);
   assert(recoveredMissingRecord, 'a verified state file should recover a missing remote active record');
   assert.strictEqual(api.getActiveTargets(context).codex.model, 'remote-model');
 
-  values.set('activeCliTargetsV1', {});
-  values.delete('activeProfileIdV2');
+  values.set(stateKey('activeCliTargetsV1'), {});
+  values.delete(stateKey('activeProfileIdV2'));
   fs.appendFileSync(legacyFiles.config, '# external edit\n');
   assert.strictEqual(await api.reconcileManagedCodexState(context, legacyFiles), undefined, 'hash mismatch must block automatic state recovery');
   assert.strictEqual(api.getActiveTargets(context).codex, undefined, 'hash mismatch must not recreate an active record');

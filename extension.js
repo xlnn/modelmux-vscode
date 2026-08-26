@@ -21,8 +21,10 @@ const PROFILES_KEY = 'modelProfilesV2';
 const ACTIVE_PROFILE_KEY = 'activeProfileIdV2';
 const ACTIVE_TARGETS_KEY = 'activeCliTargetsV1';
 const SELECTED_TARGET_KEY = 'selectedCliTargetV1';
+const ENVIRONMENT_STORAGE_MIGRATION_KEY = 'environmentStorageMigrationV1';
 const LEGACY_SECRET_KEY = 'customProxyApiKey';
 const SECRET_PREFIX = 'modelProfileApiKey:';
+const ENVIRONMENT_STATE_KEYS = [PROFILES_KEY, ACTIVE_PROFILE_KEY, ACTIVE_TARGETS_KEY, SELECTED_TARGET_KEY];
 const MANAGED_MARKER = '# Managed by Codex Model Profile Manager';
 const OLD_MANAGED_MARKER = '# Managed by Codex Config Switcher';
 const UNIVERSAL_MANAGED_MARKER = '# Managed by CLI Model Switcher';
@@ -47,6 +49,7 @@ const TARGET_EXECUTABLES = {
   opencode: 'opencode', openclaw: 'openclaw', hermes: 'hermes'
 };
 const targetMutationQueues = new Map();
+const environmentScopeIds = new WeakMap();
 let activeStateMutationQueue = Promise.resolve();
 let profileStateMutationQueue = Promise.resolve();
 let dashboardProvider;
@@ -112,6 +115,45 @@ function runtimeEnvironmentInfo() {
 
 function platformName() {
   return runtimeEnvironmentInfo().platformLabel;
+}
+
+function currentRemoteAuthority() {
+  const folders = vscode.workspace && Array.isArray(vscode.workspace.workspaceFolders)
+    ? vscode.workspace.workspaceFolders
+    : [];
+  const remoteFolder = folders.find(folder => folder && folder.uri && folder.uri.authority);
+  return remoteFolder && String(remoteFolder.uri.authority || '').trim().toLowerCase() || '';
+}
+
+function environmentScopeId(context) {
+  if (context && environmentScopeIds.has(context)) return environmentScopeIds.get(context);
+  const runtime = runtimeEnvironmentInfo();
+  const storageUri = context && context.globalStorageUri;
+  const descriptor = {
+    remoteName: runtime.remoteName || 'local',
+    remoteAuthority: runtime.isRemote ? currentRemoteAuthority() : '',
+    platform: process.platform,
+    arch: process.arch,
+    hostname: String(os.hostname() || '').trim().toLowerCase(),
+    home: path.normalize(os.homedir()),
+    storageScheme: storageUri && storageUri.scheme || '',
+    storageAuthority: storageUri && storageUri.authority || ''
+  };
+  const scopeId = crypto.createHash('sha256').update(JSON.stringify(descriptor)).digest('hex').slice(0, 24);
+  if (context) environmentScopeIds.set(context, scopeId);
+  return scopeId;
+}
+
+function environmentStateKey(context, key) {
+  return `${key}:environment:${environmentScopeId(context)}`;
+}
+
+function getEnvironmentState(context, key, fallback) {
+  return context.globalState.get(environmentStateKey(context, key), fallback);
+}
+
+async function updateEnvironmentState(context, key, value) {
+  await context.globalState.update(environmentStateKey(context, key), value);
 }
 
 function pathsForCurrentUser() {
@@ -182,19 +224,19 @@ function normalizeTargetId(value) {
 }
 
 function getSelectedTargetId(context) {
-  return normalizeTargetId(context.globalState.get(SELECTED_TARGET_KEY, 'codex'));
+  return normalizeTargetId(getEnvironmentState(context, SELECTED_TARGET_KEY, 'codex'));
 }
 
 async function setSelectedTargetId(context, targetId) {
   const normalized = normalizeTargetId(targetId);
-  await context.globalState.update(SELECTED_TARGET_KEY, normalized);
+  await updateEnvironmentState(context, SELECTED_TARGET_KEY, normalized);
   return normalized;
 }
 
 function getActiveTargets(context) {
-  const stored = context.globalState.get(ACTIVE_TARGETS_KEY, {});
+  const stored = getEnvironmentState(context, ACTIVE_TARGETS_KEY, {});
   const result = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {};
-  const legacyCodexId = context.globalState.get(ACTIVE_PROFILE_KEY);
+  const legacyCodexId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
   if (!result.codex && legacyCodexId) result.codex = { profileId: legacyCodexId };
   return result;
 }
@@ -204,8 +246,8 @@ async function updateActiveTarget(context, targetId, value) {
     const targets = getActiveTargets(context);
     if (value) targets[targetId] = value;
     else delete targets[targetId];
-    await context.globalState.update(ACTIVE_TARGETS_KEY, targets);
-    if (targetId === 'codex') await context.globalState.update(ACTIVE_PROFILE_KEY, value && value.profileId);
+    await updateEnvironmentState(context, ACTIVE_TARGETS_KEY, targets);
+    if (targetId === 'codex') await updateEnvironmentState(context, ACTIVE_PROFILE_KEY, value && value.profileId);
   });
   activeStateMutationQueue = operation;
   return operation;
@@ -496,8 +538,46 @@ function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function secretKey(profileId) {
+function legacySecretKey(profileId) {
   return `${SECRET_PREFIX}${profileId}`;
+}
+
+function profileSecretKey(context, profileId) {
+  return `${SECRET_PREFIX}environment:${environmentScopeId(context)}:${profileId}`;
+}
+
+async function migrateEnvironmentStorage(context) {
+  const markerKey = environmentStateKey(context, ENVIRONMENT_STORAGE_MIGRATION_KEY);
+  if (context.globalState.get(markerKey, false)) return;
+
+  // State written by versions <= 1.3.1 has no owner metadata. Only the local
+  // extension host may claim it; a remote host must start with independent
+  // storage instead of importing records that most likely came from the UI host.
+  if (!runtimeEnvironmentInfo().isRemote) {
+    for (const key of ENVIRONMENT_STATE_KEYS) {
+      const scopedKey = environmentStateKey(context, key);
+      if (context.globalState.get(scopedKey) !== undefined) continue;
+      const legacyValue = context.globalState.get(key);
+      if (legacyValue !== undefined) await context.globalState.update(scopedKey, legacyValue);
+    }
+
+    const legacyProfiles = context.globalState.get(PROFILES_KEY, []);
+    if (Array.isArray(legacyProfiles)) {
+      for (const profile of legacyProfiles) {
+        if (!profile || typeof profile.id !== 'string') continue;
+        const scopedKey = profileSecretKey(context, profile.id);
+        if (await context.secrets.get(scopedKey)) continue;
+        const legacySecret = await context.secrets.get(legacySecretKey(profile.id));
+        if (legacySecret) await context.secrets.store(scopedKey, legacySecret);
+      }
+    }
+  }
+
+  await context.globalState.update(markerKey, {
+    version: 1,
+    migratedAt: new Date().toISOString(),
+    importedUnscopedState: !runtimeEnvironmentInfo().isRemote
+  });
 }
 
 function readGlobalSettings() {
@@ -519,15 +599,16 @@ function uiText(english, chinese) {
 }
 
 function getProfiles(context) {
-  const profiles = context.globalState.get(PROFILES_KEY, []);
+  const profiles = getEnvironmentState(context, PROFILES_KEY, []);
   return Array.isArray(profiles) ? profiles : [];
 }
 
 async function saveProfiles(context, profiles) {
-  await context.globalState.update(PROFILES_KEY, profiles);
+  await updateEnvironmentState(context, PROFILES_KEY, profiles);
 }
 
 async function migrateLegacyProfile(context) {
+  if (runtimeEnvironmentInfo().isRemote) return;
   const existing = getProfiles(context);
   if (existing.length > 0) return;
 
@@ -553,7 +634,7 @@ async function migrateLegacyProfile(context) {
   await saveProfiles(context, [profile]);
   const legacySecret = await context.secrets.get(LEGACY_SECRET_KEY);
   if (legacySecret) {
-    await context.secrets.store(secretKey(profile.id), legacySecret);
+    await context.secrets.store(profileSecretKey(context, profile.id), legacySecret);
   }
 }
 
@@ -1349,7 +1430,7 @@ async function fetchModelsForProfile(context, profile, apiKeyOverride) {
   const authMode = profile.authMode === 'bearer' ? 'secret' : (profile.authMode || 'secret');
   let apiKey = String(apiKeyOverride || '').trim();
   if (authMode === 'secret' && !apiKey) {
-    apiKey = await context.secrets.get(secretKey(profile.id));
+    apiKey = await context.secrets.get(profileSecretKey(context, profile.id));
     if (!apiKey) {
       apiKey = await promptForApiKey(context, profile, false);
       if (!apiKey) throw new Error(uiText('No API key is available.', '没有可用的 API Key。'));
@@ -1441,7 +1522,7 @@ async function chooseReasoningPolicy(current = 'auto') {
 }
 
 async function promptForApiKey(context, profile, allowKeepExisting = true) {
-  const existing = await context.secrets.get(secretKey(profile.id));
+  const existing = await context.secrets.get(profileSecretKey(context, profile.id));
   const value = await vscode.window.showInputBox({
     title: `${profile.name}：API Key`,
     prompt: existing && allowKeepExisting
@@ -1458,7 +1539,7 @@ async function promptForApiKey(context, profile, allowKeepExisting = true) {
     await vscode.window.showErrorMessage('API Key 不能为空。');
     return undefined;
   }
-  await context.secrets.store(secretKey(profile.id), trimmed);
+  await context.secrets.store(profileSecretKey(context, profile.id), trimmed);
   return trimmed;
 }
 
@@ -1544,7 +1625,7 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
     const envKey = await promptRequired({ title: 'API Key 环境变量名', value: profile.envKey || defaultEnvKey, validateInput: value => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim()) ? undefined : '环境变量名格式无效。' });
     if (!envKey) return undefined;
     profile.envKey = envKey.trim();
-    await context.secrets.delete(secretKey(profile.id));
+    await context.secrets.delete(profileSecretKey(context, profile.id));
   } else if (profile.authMode === 'envHeaders') {
     const mapping = await promptRequired({
       title: '环境变量请求头映射',
@@ -1554,9 +1635,9 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
     });
     if (!mapping) return undefined;
     profile.envHttpHeaders = parseJsonMap(mapping, '环境变量请求头映射');
-    await context.secrets.delete(secretKey(profile.id));
+    await context.secrets.delete(profileSecretKey(context, profile.id));
   } else {
-    await context.secrets.delete(secretKey(profile.id));
+    await context.secrets.delete(profileSecretKey(context, profile.id));
   }
 
   const modelResult = await chooseInitialModel(context, profile, profile.selectedModel);
@@ -1720,7 +1801,7 @@ async function chooseProfile(context, title, predicate = () => true) {
     return undefined;
   }
 
-  const activeId = context.globalState.get(ACTIVE_PROFILE_KEY);
+  const activeId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
   const selected = await vscode.window.showQuickPick(profiles.map(profile => ({
     label: `${profile.id === activeId ? '$(check) ' : ''}${profile.name}`,
     description: providerDescription(profile),
@@ -1807,7 +1888,7 @@ async function deleteStoredProfile(context, profile, statusBar) {
     }
   }
   await saveProfiles(context, getProfiles(context).filter(item => item.id !== profile.id));
-  await context.secrets.delete(secretKey(profile.id));
+  await context.secrets.delete(profileSecretKey(context, profile.id));
   await updateStatusBar(context, statusBar);
   return { cancelled: false, restoredTargets };
 }
@@ -1919,7 +2000,7 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     let resolvedSecret;
     if (profile.kind === 'customResponses' && authMode === 'secret') {
-      resolvedSecret = await context.secrets.get(secretKey(profile.id));
+      resolvedSecret = await context.secrets.get(profileSecretKey(context, profile.id));
       if (!resolvedSecret) resolvedSecret = await promptForApiKey(context, profile, false);
       if (!resolvedSecret) return false;
     }
@@ -2083,7 +2164,7 @@ async function clearApiKey(context, statusBar) {
     if (answer !== '清除') return;
     const activeAfterConfirmation = await activeManagedTargetForProfile(context, profile.id);
     if (activeAfterConfirmation) throw new Error(`该 API Key 已被 ${targetLabel(activeAfterConfirmation)} 使用，清除操作已取消。`);
-    await context.secrets.delete(secretKey(profile.id));
+    await context.secrets.delete(profileSecretKey(context, profile.id));
     await updateStatusBar(context, statusBar);
     await vscode.window.showInformationMessage(`已清除“${profile.name}”的 API Key。`);
   });
@@ -2113,13 +2194,13 @@ async function showStatus(context) {
   const runtimeToken = await fileExists(files.token);
   const originalState = await readOriginalState(files);
   const profiles = getProfiles(context);
-  const activeId = context.globalState.get(ACTIVE_PROFILE_KEY);
+  const activeId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
   const active = profiles.find(item => item.id === activeId);
   const profileLines = [];
   for (const profile of profiles) {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     const hasSecret = profile.kind === 'customResponses' && authMode === 'secret'
-      ? Boolean(await context.secrets.get(secretKey(profile.id))) : false;
+      ? Boolean(await context.secrets.get(profileSecretKey(context, profile.id))) : false;
     const authText = profile.kind !== 'customResponses' ? '内置/外部凭据'
       : authMode === 'secret' ? (hasSecret ? 'SecretStorage 已保存' : 'SecretStorage 缺失')
         : authMode === 'env' ? `${profile.envKey || '环境变量未设置名称'}：${process.env[profile.envKey] ? '当前进程可见' : '当前进程不可见'}`
@@ -2192,6 +2273,7 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   }
 
   if (!(await isManagedConfig(files.config))) {
+    await removeRuntimeToken(files.token);
     await updateStatusBar(context, statusBar, files);
     return;
   }
@@ -2206,6 +2288,7 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   const activeRecord = getActiveTargets(context).codex;
   const resolved = resolveManagedCodexProfile(context, content, originalState, activeRecord);
   if (!resolved) {
+    await removeRuntimeToken(files.token);
     await updateStatusBar(context, statusBar, files);
     return;
   }
@@ -2214,7 +2297,7 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   const activeAuthMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
   let resolvedSecret;
   if (profile.kind === 'customResponses' && activeAuthMode === 'secret') {
-    resolvedSecret = await context.secrets.get(secretKey(profile.id));
+    resolvedSecret = await context.secrets.get(profileSecretKey(context, profile.id));
   }
 
   const management = await getTargetManagementState(context, 'codex', files);
@@ -2396,7 +2479,7 @@ async function collectDiagnostics(context) {
     const configText = await readConfigText(files.config);
     add('Responses 协议', configText.includes('wire_api = "responses"'), 'wire_api = "responses"');
     if (authMode === 'secret') {
-      const secret = await context.secrets.get(secretKey(profile.id));
+      const secret = await context.secrets.get(profileSecretKey(context, profile.id));
       add('SecretStorage 密钥', Boolean(secret), secret ? '已保存（内容未显示）' : '缺失');
       if (process.platform === 'win32') {
         add('Windows 兼容认证', Boolean(secret) && configText.includes('experimental_bearer_token ='), '托管配置使用受 ACL 保护的 experimental_bearer_token');
@@ -2947,7 +3030,7 @@ async function getDashboardState(context) {
   for (const profile of profiles) {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     const requiresSecret = isCustomProfile(profile) && authMode === 'secret';
-    const hasSecret = requiresSecret ? Boolean(await context.secrets.get(secretKey(profile.id))) : false;
+    const hasSecret = requiresSecret ? Boolean(await context.secrets.get(profileSecretKey(context, profile.id))) : false;
     const envReady = isCustomProfile(profile) && authMode === 'env'
       ? Boolean(process.env[profile.envKey])
       : isCustomProfile(profile) && authMode === 'envHeaders'
@@ -3151,11 +3234,11 @@ class DashboardViewProvider {
             profile = normalizeProfileFromGui(input, existing);
             const apiKey = String(message.apiKey || '').trim();
             if (isCustomProfile(profile) && profile.authMode === 'secret') {
-              const oldSecret = existing ? await this.context.secrets.get(secretKey(profile.id)) : undefined;
+              const oldSecret = existing ? await this.context.secrets.get(profileSecretKey(this.context, profile.id)) : undefined;
               if (!apiKey && !oldSecret) throw new Error(uiText('SecretStorage authentication requires an API key.', 'SecretStorage 认证需要填写 API Key。'));
-              if (apiKey) await this.context.secrets.store(secretKey(profile.id), apiKey);
+              if (apiKey) await this.context.secrets.store(profileSecretKey(this.context, profile.id), apiKey);
             } else {
-              await this.context.secrets.delete(secretKey(profile.id));
+              await this.context.secrets.delete(profileSecretKey(this.context, profile.id));
             }
             const next = existing
               ? profiles.map(item => item.id === profile.id ? profile : item)
@@ -3192,7 +3275,7 @@ class DashboardViewProvider {
           assertNoSensitiveStaticValues(temp.httpHeaders, uiText('Static headers', '静态请求头'));
           if (!temp.baseUrl) throw new Error(uiText('Enter a Base URL first.', '请先填写 Base URL。'));
           let apiKey = String(message.apiKey || '').trim() || undefined;
-          if (temp.authMode === 'secret' && !apiKey && existing) apiKey = await this.context.secrets.get(secretKey(existing.id));
+          if (temp.authMode === 'secret' && !apiKey && existing) apiKey = await this.context.secrets.get(profileSecretKey(this.context, existing.id));
           if (temp.authMode === 'secret' && !apiKey) throw new Error(uiText('Enter an API key or save the provider secret first.', '请先填写 API Key，或先保存该 Provider 的密钥。'));
           const models = await fetchModelsForProfile(this.context, temp, apiKey);
           await this.respond(requestId, true, { models });
@@ -3273,7 +3356,7 @@ class DashboardViewProvider {
               { modal: true }, clearLabel
             );
             if (answer !== clearLabel) { cancelled = true; return; }
-            await this.context.secrets.delete(secretKey(profile.id));
+            await this.context.secrets.delete(profileSecretKey(this.context, profile.id));
           });
           if (cancelled) {
             await this.respond(requestId, true, { cancelled: true });
@@ -3415,6 +3498,7 @@ async function openDashboard() {
 
 /** @param {vscode.ExtensionContext} context */
 async function activate(context) {
+  await migrateEnvironmentStorage(context);
   await migrateLegacyProfile(context);
   try {
     await reconcileManagedCodexState(context);
@@ -3498,6 +3582,12 @@ module.exports = {
     modelDiscoveryUrl,
     validatedModelDiscoveryUrl,
     runtimeEnvironmentInfo,
+    environmentScopeId,
+    environmentStateKey,
+    profileSecretKey,
+    migrateEnvironmentStorage,
+    getProfiles,
+    saveProfiles,
     readOriginalState,
     ensureOriginalBackup,
     pathsForTarget,

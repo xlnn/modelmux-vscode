@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.2
+
+- Provider、CLI 选择、活动记录与 SecretStorage 密钥改为按实际 Extension Host 分区，本机、WSL、容器、Codespaces 与 Remote-SSH 不再共享配置。
+- Remote-SSH 使用远程 authority 区分不同服务器；连接不同 SSH 主机时分别显示各自主机保存的 Provider 与密钥。
+- 1.3.1 及更早版本的无分区状态只迁移到本机作用域，远程首次启动保持空白，避免再次读取 Windows 本地 Provider。
+- 当前作用域找不到匹配 Provider 时删除遗留的 Linux/macOS 运行时 Token，同时保留托管配置文件供用户诊断或恢复，避免远程 CLI 继续使用其它环境的凭据。
+- 扩展固定作为 Workspace Extension 运行；远程窗口必须在远程 Extension Host 安装并运行，避免回退到本地 UI Host 后误操作本机 CLI 配置。
+- 新增本机、两台 Remote-SSH 主机之间的状态、活动记录及 SecretStorage 隔离回归测试。
+
 ## 1.3.1
 
 - 修复 Remote-SSH/Linux 上配置出现哈希漂移后，面板提示“重新应用”但按钮与后端同时禁止应用 Provider 的问题。

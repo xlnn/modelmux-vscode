@@ -1,4 +1,4 @@
-# ModelMux: AI CLI Model Manager 1.3.1
+# ModelMux: AI CLI Model Manager 1.3.2
 
 [中文说明](#中文说明)
 
@@ -20,15 +20,13 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 - Adjust the dashboard font size from `10px` to `20px` in the ModelMux Settings panel.
 - Restore the VS Code default font or reset the complete appearance configuration with one action.
 
-## What's New in 1.3.1
+## What's New in 1.3.2
 
-- Recover verified Codex management state after a Remote-SSH/Linux extension host reconnect, including recreation of the user-only runtime credential file.
-- Reapply a provider after a managed configuration drift with explicit confirmation; automatic refresh still never overwrites external edits.
-- Preserve externally edited managed configurations: state recovery and automatic configuration refresh stop on a hash mismatch, while a runtime token is recreated only when the provider identity, destination, protocol, and helper path still match.
-- Delete an active provider safely by restoring every associated CLI configuration first. If any restore fails or is cancelled, the provider and saved credential are retained.
-- Discover provider ownership from active records, integrity state, and Codex metadata, so deletion remains safe when a remote active record or managed configuration file is missing.
-- Serialize startup credential recovery with provider and target mutations, and recheck the content hash before writing to avoid races with deletion or external edits.
-- Expand provider action menus inside their list rows, scroll them into view, and keep them independently scrollable in short sidebar Webviews.
+- Scope providers, selected CLI targets, active records, and SecretStorage credentials to the Extension Host that actually runs ModelMux.
+- Keep local Windows, WSL, Dev Containers, Codespaces, and Remote-SSH configuration independent; different SSH authorities also receive separate stores.
+- Migrate unscoped data from ModelMux 1.3.1 and earlier only into the local host. A remote host starts with an empty provider store and must be configured or imported independently.
+- Remove an orphaned Linux/macOS runtime token during migration without rewriting the managed CLI configuration. If a remote configuration was already managed, restore the original configuration first, then add or import a provider for that remote host.
+- Run only as a Workspace Extension so a remote window cannot fall back to the local UI Extension Host and operate on local CLI files.
 
 ## CLI Support Matrix
 
@@ -57,10 +55,10 @@ To install the packaged VSIX manually:
 1. Open the VS Code Extensions view.
 2. Open the `...` menu in the upper-right corner.
 3. Select **Install from VSIX...**.
-4. Select `modelmux-1.3.1.vsix`.
+4. Select `modelmux-1.3.2.vsix`.
 5. Run `Developer: Reload Window`.
 
-For Remote-SSH, WSL, Dev Containers, or Codespaces, install ModelMux in the corresponding remote extension host. ModelMux only changes CLI configuration files in the environment where the extension is running.
+For Remote-SSH, WSL, Dev Containers, or Codespaces, install ModelMux in the corresponding remote extension host. ModelMux only changes CLI configuration files in the environment where the extension is running. Provider profiles, active records, and stored API keys are isolated from the local host and from other remote authorities.
 
 ## Usage
 
@@ -181,26 +179,26 @@ Development and CI use Node.js 22 or newer. The extension bundle remains targete
 The package command reads the package version dynamically and generates:
 
 ```text
-modelmux-1.3.1.vsix
+modelmux-1.3.2.vsix
 ```
 
 The smoke suite covers manifest metadata, appearance settings and localization, export redaction, Webview CSP/DOM/accessibility boundaries, import conflict handling, Codex configuration generation, all six additional CLI adapters, concurrent target state, isolated restore, credential handling, model discovery security, and the bundled extension entry point. GitHub CI runs `npm ci`, `npm run check`, `npm test`, and `npm run build` on Ubuntu, Windows, and macOS.
 
 ## Publishing
 
-Upload `modelmux-1.3.1.vsix` from the Visual Studio Marketplace publisher portal, or publish it from the command line with a Personal Access Token for the `cherry-local` publisher:
+Upload `modelmux-1.3.2.vsix` from the Visual Studio Marketplace publisher portal, or publish it from the command line with a Personal Access Token for the `cherry-local` publisher:
 
 ```bash
-npx vsce publish --packagePath modelmux-1.3.1.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.3.2.vsix -p "$VSCE_PAT"
 ```
 
 PowerShell:
 
 ```powershell
-npx vsce publish --packagePath modelmux-1.3.1.vsix -p $env:VSCE_PAT
+npx vsce publish --packagePath modelmux-1.3.2.vsix -p $env:VSCE_PAT
 ```
 
-The repository is configured as `xlnn/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies that a GitHub Release tag is `v1.3.1`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
+The repository is configured as `xlnn/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies that a GitHub Release tag is `v1.3.2`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
 
 ## Extension Identity
 
@@ -225,21 +223,19 @@ MIT
 
 ## 中文说明
 
-### ModelMux：AI CLI 模型管理器 1.3.1
+### ModelMux：AI CLI 模型管理器 1.3.2
 
 一个面向 **Windows、macOS、Linux、WSL、Remote-SSH、Dev Container 与 GitHub Codespaces** 的 VS Code 图形化 AI CLI 配置管理插件。
 
 插件可独立切换 Codex、Claude Code、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 的默认 Provider/模型，支持原配置备份、恢复、外部改动检测、环境自检以及不含密钥的 Provider 迁移。
 
-## 1.3.1 远程配置漂移与重新应用修复
+## 1.3.2 本地与远程 Provider 隔离
 
-- Remote-SSH/Linux 扩展主机重连后，可从通过完整性校验的 Codex 配置元数据和状态文件恢复托管状态，并重新创建仅当前用户可读的运行时凭据。
-- 远端托管配置发生漂移后，可在明确确认后重新应用 Provider；自动刷新仍不会覆盖外部修改。
-- 检测到配置哈希不一致时不恢复活动状态、不自动重写配置；只有 Provider 身份、目标地址、协议和 Token helper 路径仍完全匹配时，才单独补建运行时 Token。
-- 正在使用的 Provider 可以直接删除：确认后先恢复所有关联 CLI 的原配置，再删除 Provider 和 SecretStorage 密钥；任一恢复失败或取消时保留 Provider。
-- 即使远程活动记录或托管配置文件缺失，也会通过完整性状态和 Codex 元数据识别关联 Provider，避免留下无法管理的配置或凭据。
-- 启动凭据恢复与 Provider/CLI 修改使用同一套串行锁，并在写入前再次校验哈希，避免与删除或外部修改竞态。
-- Provider 操作菜单改为在列表项内展开，自动滚入视口，并在侧边栏高度不足时独立滚动，确保所有操作完整可见。
+- Provider、当前 CLI、活动记录与 SecretStorage 密钥按实际运行 ModelMux 的 Extension Host 分区保存。
+- Windows 本机、WSL、Dev Container、Codespaces、Remote-SSH 互不共享；不同 SSH authority 也各自独立。
+- 1.3.1 及更早版本的无分区数据只迁移到本机，远程环境首次打开时为空，需要在远程单独添加或导入 Provider。
+- 迁移后若远程托管配置找不到本环境的 Provider，会删除旧的 Linux/macOS 临时 Token，但不会擅自覆盖 CLI 配置；请先恢复原配置，再为该远程环境添加或导入 Provider。
+- 插件固定作为 Workspace Extension 运行，远程窗口不会回退到本地 UI Extension Host 后误操作本机 CLI 文件。
 
 ## 1.1.0 ModelMux
 
@@ -285,10 +281,10 @@ Provider 列表项会根据当前 CLI 和协议显示是否兼容。不兼容组
 1. 打开 VS Code 扩展面板。
 2. 点击右上角 `...`。
 3. 选择 **从 VSIX 安装…**。
-4. 选择 `modelmux-1.3.1.vsix`。
+4. 选择 `modelmux-1.3.2.vsix`。
 5. 执行 `Developer: Reload Window`。
 
-在 Remote-SSH、WSL、Dev Container 或 Codespaces 窗口中，应将插件安装在对应的远程扩展主机上。插件只修改它实际运行环境中的 CLI 配置，不会跨环境误改另一台设备的配置。
+在 Remote-SSH、WSL、Dev Container 或 Codespaces 窗口中，应将插件安装在对应的远程扩展主机上。插件只修改它实际运行环境中的 CLI 配置；Provider、活动记录和 API Key 与本机及其它远程 authority 分开保存。
 
 ## 配置路径与覆盖
 
@@ -381,23 +377,23 @@ npm run build
 npm run package
 ```
 
-开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.3.1.vsix`。
+开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.3.2.vsix`。
 
 ## 发布
 
-可在 Visual Studio Marketplace 的 Publisher 管理页面直接上传 `modelmux-1.3.1.vsix`，也可以使用 Publisher `cherry-local` 的 Personal Access Token 从命令行发布：
+可在 Visual Studio Marketplace 的 Publisher 管理页面直接上传 `modelmux-1.3.2.vsix`，也可以使用 Publisher `cherry-local` 的 Personal Access Token 从命令行发布：
 
 ```bash
-npx vsce publish --packagePath modelmux-1.3.1.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.3.2.vsix -p "$VSCE_PAT"
 ```
 
 Windows PowerShell：
 
 ```powershell
-npx vsce publish --packagePath modelmux-1.3.1.vsix -p $env:VSCE_PAT
+npx vsce publish --packagePath modelmux-1.3.2.vsix -p $env:VSCE_PAT
 ```
 
-仓库包含 `.github/workflows/release.yml`。发布流程使用 Node.js 22，并执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`；随后只生成并上传当前版本的 VSIX。GitHub Release 标签必须为 `v1.3.1`；仓库配置 `VSCE_PAT` 后会继续发布到 VS Code Marketplace。
+仓库包含 `.github/workflows/release.yml`。发布流程使用 Node.js 22，并执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`；随后只生成并上传当前版本的 VSIX。GitHub Release 标签必须为 `v1.3.2`；仓库配置 `VSCE_PAT` 后会继续发布到 VS Code Marketplace。
 
 GitHub CI 在 Ubuntu、Windows、macOS 上使用 Node.js 22 执行安装、语法检查、冒烟测试和 bundle 构建。现有测试覆盖：
 
