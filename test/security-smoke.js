@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Module = require('module');
+const http = require('http');
+const TOML = require('@iarna/toml');
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'modelmux-security-test-'));
 const previousOpenCodeDir = process.env.OPENCODE_CONFIG_DIR;
@@ -76,7 +78,18 @@ function plannedProfiles(plan) {
     'parseManagedCodexMetadata',
     'reconcileManagedCodexState',
     'canRecreateRuntimeTokenFromManagedConfig',
-    'recreateRuntimeTokenIfNeeded'
+    'recreateRuntimeTokenIfNeeded',
+    'mergeManagedCodexConfig',
+    'requestJson',
+    'commitProfileAndSecret',
+    'originalContentForTarget',
+    'writeAtomic',
+    'buildRestoredCodexConfig',
+    'removeFileAtomicallyIfUnchanged',
+    'activateProfile',
+    'updateActiveTarget',
+    'getActiveTargets',
+    'restoreOriginal'
   ]);
 
   const secretValues = [
@@ -109,6 +122,76 @@ function plannedProfiles(plan) {
   assert(exportedText.includes('2026-08-01'), 'ordinary query parameters must remain portable');
   for (const runtimeOnly of ['hasSecret', 'requiresSecret', 'active', 'envReady']) {
     assert(!Object.prototype.hasOwnProperty.call(exported, runtimeOnly), `${runtimeOnly} is runtime-only state`);
+  }
+  const genericSecrets = api.exportableProfile(profile({
+    baseUrl: 'https://url-user:url-password@gateway.example/v1?api_key=url-query-secret&api-version=2026-08-01',
+    modelDiscoveryPath: '/models?token=discovery-secret&api-version=2026-08-01',
+    httpHeaders: { token: 'generic-token-secret', 'X-Token': 'x-token-secret', 'X-Client': 'safe' },
+    queryParams: { key: 'generic-key-secret', 'api-version': '2026-08-01' }
+  }));
+  const genericExport = JSON.stringify(genericSecrets);
+  for (const value of ['url-user', 'url-password', 'url-query-secret', 'discovery-secret', 'generic-token-secret', 'x-token-secret', 'generic-key-secret']) {
+    assert(!genericExport.includes(value), `export leaked ${value}`);
+  }
+  assert(genericExport.includes('api-version'));
+  assert.strictEqual(genericSecrets.baseUrl, 'https://gateway.example/v1?api-version=2026-08-01');
+  assert.strictEqual(genericSecrets.modelDiscoveryPath, '/models?api-version=2026-08-01');
+  assert.deepStrictEqual(genericSecrets.httpHeaders, { 'X-Client': 'safe' });
+  assert.deepStrictEqual(genericSecrets.queryParams, { 'api-version': '2026-08-01' });
+  assert.throws(() => api.normalizeProfileFromGui({
+    ...profile(), name: 'bad\nname', selectedModel: 'model-a'
+  }), /control characters|控制字符/);
+  assert.throws(() => api.normalizeProfileFromGui({
+    ...profile(), baseUrl: 'https://user:password@gateway.example/v1'
+  }), /username or password|用户名或密码/);
+  assert.throws(() => api.normalizeProfileFromGui({
+    ...profile(), baseUrl: 'https://gateway.example/v1?access_token=secret'
+  }), /credential-like query|疑似凭据/);
+  assert.throws(() => api.buildManagedConfig(profile({
+    baseUrl: 'https://legacy-user:legacy-password@gateway.example/v1'
+  }), 'model-a', path.join(sandbox, 'legacy-token')), /username or password|用户名或密码/,
+  'previously saved profiles must not bypass Base URL validation');
+  assert.throws(() => api.buildManagedConfig(profile({
+    baseUrl: 'https://gateway.example/v1?api_key=legacy-secret'
+  }), 'model-a', path.join(sandbox, 'legacy-token')), /credential-like query|疑似凭据/,
+  'previously saved profiles must not write query-string credentials');
+
+  const oversizedServer = http.createServer((request, response) => {
+    response.on('error', () => {});
+    if (request.url === '/declared-models') {
+      response.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': String(4 * 1024 * 1024 + 1)
+      });
+      response.end('{}');
+      return;
+    }
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Transfer-Encoding': 'chunked'
+    });
+    const chunk = 'x'.repeat(64 * 1024);
+    for (let index = 0; index < 65; index += 1) response.write(chunk);
+    response.end();
+  });
+  await new Promise((resolve, reject) => {
+    oversizedServer.once('error', reject);
+    oversizedServer.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const address = oversizedServer.address();
+    await assert.rejects(
+      api.requestJson(`http://127.0.0.1:${address.port}/declared-models`, {}, 2000),
+      /exceeded 4 MB|超过 4 MB/,
+      'model discovery must reject an oversized response before buffering it'
+    );
+    await assert.rejects(
+      api.requestJson(`http://127.0.0.1:${address.port}/chunked-models`, {}, 2000),
+      /exceeded 4 MB|超过 4 MB/,
+      'model discovery must enforce the limit when Content-Length is absent'
+    );
+  } finally {
+    await new Promise(resolve => oversizedServer.close(resolve));
   }
 
   assert.doesNotThrow(() => api.validateWebviewMessage({ command: 'ready' }));
@@ -152,6 +235,62 @@ function plannedProfiles(plan) {
   assert(diagnostics && Array.isArray(diagnostics.checks));
   assert(!fs.existsSync(missingDirectory), 'read-only diagnostics must not create a missing CLI configuration directory');
 
+  const rollbackPrevious = [profile({ authMode: 'secret', name: 'Before rollback' })];
+  const rollbackNext = [profile({ authMode: 'secret', name: 'After rollback' })];
+  const rollbackValues = new Map();
+  const rollbackSecrets = new Map();
+  let rollbackStoreCalls = 0;
+  const rollbackContext = {
+    globalState: {
+      get(key, fallback) { return rollbackValues.has(key) ? rollbackValues.get(key) : fallback; },
+      async update(key, value) { if (value === undefined) rollbackValues.delete(key); else rollbackValues.set(key, value); }
+    },
+    secrets: {
+      async get(key) { return rollbackSecrets.get(key); },
+      async store(key, value) {
+        rollbackStoreCalls += 1;
+        if (rollbackStoreCalls === 1) throw new Error('simulated SecretStorage failure');
+        rollbackSecrets.set(key, value);
+      },
+      async delete(key) { rollbackSecrets.delete(key); }
+    }
+  };
+  const rollbackProfilesKey = api.environmentStateKey(rollbackContext, 'modelProfilesV2');
+  const rollbackSecretKey = api.profileSecretKey(rollbackContext, 'shared-profile');
+  rollbackValues.set(rollbackProfilesKey, rollbackPrevious);
+  rollbackSecrets.set(rollbackSecretKey, 'old-secret');
+  await assert.rejects(
+    api.commitProfileAndSecret(rollbackContext, rollbackPrevious, rollbackNext, rollbackNext[0], 'new-secret'),
+    /simulated SecretStorage failure/
+  );
+  assert.deepStrictEqual(rollbackValues.get(rollbackProfilesKey), rollbackPrevious,
+    'a SecretStorage failure must roll back the provider list');
+  assert.strictEqual(rollbackSecrets.get(rollbackSecretKey), 'old-secret',
+    'a SecretStorage failure must restore the previous credential');
+
+  const stateFailureValues = new Map();
+  let stateFailureSecretWrites = 0;
+  const stateFailureContext = {
+    globalState: {
+      get(key, fallback) { return stateFailureValues.has(key) ? stateFailureValues.get(key) : fallback; },
+      async update() { throw new Error('simulated GlobalState failure'); }
+    },
+    secrets: {
+      async get() { return 'old-secret'; },
+      async store() { stateFailureSecretWrites += 1; },
+      async delete() { stateFailureSecretWrites += 1; }
+    }
+  };
+  const stateFailureProfilesKey = api.environmentStateKey(stateFailureContext, 'modelProfilesV2');
+  stateFailureValues.set(stateFailureProfilesKey, rollbackPrevious);
+  await assert.rejects(
+    api.commitProfileAndSecret(stateFailureContext, rollbackPrevious, rollbackNext, rollbackNext[0], 'new-secret'),
+    /simulated GlobalState failure/
+  );
+  assert.deepStrictEqual(stateFailureValues.get(stateFailureProfilesKey), rollbackPrevious);
+  assert.strictEqual(stateFailureSecretWrites, 0,
+    'a GlobalState failure must not partially update SecretStorage');
+
   const managedDir = path.join(sandbox, 'codex-management');
   fs.mkdirSync(managedDir, { recursive: true });
   const managedFiles = {
@@ -162,9 +301,12 @@ function plannedProfiles(plan) {
     originalState: path.join(managedDir, 'config.toml.state.json')
   };
   const managedContent = '# Managed by Codex Model Profile Manager\nmodel = "gpt-5"\n';
+  const originalManagedContent = 'model = "original"\n';
+  fs.writeFileSync(managedFiles.backup, originalManagedContent);
   fs.writeFileSync(managedFiles.config, managedContent);
   fs.writeFileSync(managedFiles.originalState, JSON.stringify({
-    existed: false,
+    existed: true,
+    originalHash: api.contentHash(originalManagedContent),
     lastAppliedHash: api.contentHash(managedContent),
     profileId: 'shared-profile',
     model: 'gpt-5'
@@ -207,6 +349,182 @@ function plannedProfiles(plan) {
     /发生了变化|changed/,
     'a second external edit after confirmation must abort the write'
   );
+  fs.rmSync(managedFiles.backup);
+  const missingBackup = await api.getTargetManagementState(context, 'codex', managedFiles);
+  assert.strictEqual(missingBackup.status, 'backup-missing', 'a missing original backup must outrank managed drift');
+  assert.strictEqual(missingBackup.canApply, false);
+  await assert.rejects(
+    api.assertTargetCanApply(context, 'codex', managedFiles, true),
+    /备份缺失|Backup.*missing/i,
+    'reapply must be blocked when the recorded original backup is gone'
+  );
+
+  const atomicDir = path.join(sandbox, 'atomic-rollback');
+  fs.mkdirSync(atomicDir, { recursive: true });
+  const atomicFile = path.join(atomicDir, 'config.toml');
+  fs.writeFileSync(atomicFile, 'old-content\n');
+  await assert.rejects(
+    api.writeAtomic(atomicFile, 'new-content\n', undefined, {
+      async afterInstall() { throw new Error('simulated post-install failure'); }
+    }),
+    /simulated post-install failure/
+  );
+  assert.strictEqual(fs.readFileSync(atomicFile, 'utf8'), 'old-content\n',
+    'a failure after installing the replacement must restore the old file');
+  fs.writeFileSync(atomicFile, 'old-content\n');
+  await assert.rejects(
+    api.writeAtomic(atomicFile, 'new-content\n', undefined, {
+      async afterDisplace() { fs.writeFileSync(atomicFile, 'external-content\n'); }
+    }),
+    /发生了变化|changed|恢复副本/i
+  );
+  assert.strictEqual(fs.readFileSync(atomicFile, 'utf8'), 'external-content\n',
+    'an external edit before the final replace check must never be overwritten');
+  const newlyCreatedFile = path.join(atomicDir, 'new-config.toml');
+  await assert.rejects(
+    api.writeAtomic(newlyCreatedFile, 'new-content\n', undefined, {
+      async afterInstall() { throw new Error('simulated new-file permission failure'); }
+    }),
+    /simulated new-file permission failure/
+  );
+  assert.strictEqual(fs.existsSync(newlyCreatedFile), false,
+    'a failed first write must not leave an uncommitted replacement behind');
+  const linkedFile = path.join(atomicDir, 'linked-config.toml');
+  await assert.rejects(
+    api.writeAtomic(linkedFile, 'new-content\n', undefined, {
+      async afterLinkInstall() { throw new Error('simulated temporary-link cleanup failure'); }
+    }),
+    /simulated temporary-link cleanup failure/
+  );
+  assert.strictEqual(fs.existsSync(linkedFile), false,
+    'a failure after the exclusive hard-link install must roll back the new target');
+  const backupRaceDir = path.join(atomicDir, 'backup-race');
+  fs.mkdirSync(backupRaceDir);
+  const backupRaceFiles = {
+    targetId: 'codex',
+    config: path.join(backupRaceDir, 'config.toml'),
+    backup: path.join(backupRaceDir, 'config.toml.backup'),
+    originalState: path.join(backupRaceDir, 'config.toml.state.json')
+  };
+  fs.writeFileSync(backupRaceFiles.config, 'original-content\n');
+  const originalCopyFile = fs.promises.copyFile;
+  fs.promises.copyFile = async (...args) => {
+    await originalCopyFile.apply(fs.promises, args);
+    if (args[0] === backupRaceFiles.config) fs.writeFileSync(backupRaceFiles.config, 'external-content\n');
+  };
+  try {
+    await assert.rejects(api.ensureOriginalBackup(backupRaceFiles), /创建原始备份期间发生了变化/);
+  } finally {
+    fs.promises.copyFile = originalCopyFile;
+  }
+  assert.strictEqual(fs.existsSync(backupRaceFiles.backup), false,
+    'a raced original backup must be removed');
+  assert.strictEqual(fs.existsSync(backupRaceFiles.originalState), false,
+    'a raced original backup must not create an ownership record');
+  const invalidStateFiles = {
+    originalState: path.join(atomicDir, 'state-is-directory')
+  };
+  fs.mkdirSync(invalidStateFiles.originalState);
+  await assert.rejects(api.readOriginalState(invalidStateFiles), /不是普通文件|not.*regular/i,
+    'state I/O errors must not be silently treated as a missing state record');
+  const directoryTarget = path.join(atomicDir, 'directory-target');
+  fs.mkdirSync(directoryTarget);
+  await assert.rejects(api.writeAtomic(directoryTarget, 'unsafe\n'), /不是普通文件|not.*regular/i);
+  const deleteRaceFile = path.join(atomicDir, 'delete-race.toml');
+  fs.writeFileSync(deleteRaceFile, 'managed-content\n');
+  await assert.rejects(
+    api.removeFileAtomicallyIfUnchanged(deleteRaceFile, undefined, {
+      async afterMove() { fs.writeFileSync(deleteRaceFile, 'external-content\n'); }
+    }),
+    /重新创建|recreated|原内容保留/i,
+    'an external file created during restore must not be deleted or treated as a successful restore'
+  );
+  assert.strictEqual(fs.readFileSync(deleteRaceFile, 'utf8'), 'external-content\n');
+
+  const activeFailureValues = new Map();
+  const activeTargetsKey = api.environmentStateKey(context, 'activeCliTargetsV1');
+  const legacyActiveKey = api.environmentStateKey(context, 'activeProfileIdV2');
+  activeFailureValues.set(activeTargetsKey, { codex: { profileId: 'old-profile', model: 'old-model' } });
+  activeFailureValues.set(legacyActiveKey, 'old-profile');
+  let failLegacyUpdate = true;
+  const activeFailureContext = {
+    globalState: {
+      get(key, fallback) { return activeFailureValues.has(key) ? activeFailureValues.get(key) : fallback; },
+      async update(key, value) {
+        if (value === undefined) activeFailureValues.delete(key); else activeFailureValues.set(key, value);
+        if (key === legacyActiveKey && value === 'new-profile' && failLegacyUpdate) {
+          failLegacyUpdate = false;
+          throw new Error('simulated legacy active-state failure');
+        }
+      }
+    }
+  };
+  await assert.rejects(
+    api.updateActiveTarget(activeFailureContext, 'codex', { profileId: 'new-profile', model: 'new-model' }),
+    /simulated legacy active-state failure/
+  );
+  assert.deepStrictEqual(activeFailureValues.get(activeTargetsKey), {
+    codex: { profileId: 'old-profile', model: 'old-model' }
+  }, 'a failure updating the legacy active key must roll back the canonical active-target map');
+  assert.strictEqual(activeFailureValues.get(legacyActiveKey), 'old-profile');
+  activeFailureValues.set(activeTargetsKey, {});
+  activeFailureValues.set(legacyActiveKey, 'stale-profile');
+  assert.strictEqual(api.getActiveTargets(activeFailureContext).codex, undefined,
+    'a stale legacy key must not resurrect Codex after the canonical target map exists');
+
+  const transactionDir = path.join(sandbox, 'codex-activation-transaction');
+  fs.mkdirSync(transactionDir, { recursive: true });
+  const transactionFiles = {
+    targetId: 'codex',
+    configDir: transactionDir,
+    codexDir: transactionDir,
+    config: path.join(transactionDir, 'config.toml'),
+    backup: path.join(transactionDir, 'config.toml.original-backup'),
+    originalState: path.join(transactionDir, 'config.toml.state.json'),
+    token: path.join(transactionDir, 'runtime-token')
+  };
+  fs.writeFileSync(transactionFiles.config, 'model = "original-model"\n');
+  const transactionProfile = profile({
+    id: 'transaction-profile',
+    selectedModel: 'old-model',
+    models: ['old-model', 'new-model']
+  });
+  const transactionValues = new Map();
+  const transactionProfilesKey = api.environmentStateKey(context, 'modelProfilesV2');
+  const transactionTargetsKey = api.environmentStateKey(context, 'activeCliTargetsV1');
+  transactionValues.set(transactionProfilesKey, [transactionProfile]);
+  let failCanonicalActiveUpdate = true;
+  const transactionContext = {
+    globalState: {
+      get(key, fallback) { return transactionValues.has(key) ? transactionValues.get(key) : fallback; },
+      async update(key, value) {
+        if (value === undefined) transactionValues.delete(key); else transactionValues.set(key, value);
+        if (key === transactionTargetsKey && value && value.codex && failCanonicalActiveUpdate) {
+          failCanonicalActiveUpdate = false;
+          throw new Error('simulated activation state commit failure');
+        }
+      }
+    },
+    secrets: { async get() { return undefined; } }
+  };
+  await assert.rejects(
+    api.activateProfile(transactionContext, transactionProfile.id, {}, 'new-model', {
+      files: transactionFiles,
+      offerReload: false,
+      showError: false,
+      throwOnError: true
+    }),
+    /simulated activation state commit failure/
+  );
+  assert.strictEqual(fs.readFileSync(transactionFiles.config, 'utf8'), 'model = "original-model"\n',
+    'an active-state commit failure must roll back the Codex config');
+  assert.strictEqual(fs.existsSync(transactionFiles.backup), false,
+    'a failed first activation must roll back the newly created backup');
+  assert.strictEqual(fs.existsSync(transactionFiles.originalState), false,
+    'a failed first activation must roll back the newly created state record');
+  assert.deepStrictEqual(transactionValues.get(transactionProfilesKey), [transactionProfile],
+    'a failed activation must roll back the selected model in profile state');
+  assert.strictEqual(api.getActiveTargets(transactionContext).codex, undefined);
 
   const tokenPath = '/run/user/1000/codex-model-profile-token-1000';
   const tokenAuth = api.authCommandForToken(tokenPath, 'linux');
@@ -259,6 +577,211 @@ function plannedProfiles(plan) {
     ),
     false,
     'token recreation must stop if the helper path changed'
+  );
+
+  const codexExtensionDir = path.join(sandbox, 'codex-extension-settings');
+  const codexExtensionFiles = {
+    targetId: 'codex',
+    configDir: codexExtensionDir,
+    codexDir: codexExtensionDir,
+    config: path.join(codexExtensionDir, 'config.toml'),
+    backup: path.join(codexExtensionDir, 'config.toml.backup'),
+    originalState: path.join(codexExtensionDir, 'config.toml.state.json'),
+    token: path.join(codexExtensionDir, 'runtime-token')
+  };
+  fs.mkdirSync(codexExtensionDir, { recursive: true });
+  const codexExtensionProfile = profile({
+    id: 'codex-extension-profile',
+    authMode: 'env',
+    selectedModel: 'extension-model',
+    models: ['extension-model']
+  });
+  const codexManagedContent = api.buildManagedConfig(
+    codexExtensionProfile,
+    'extension-model',
+    codexExtensionFiles.token
+  );
+  // Root settings must appear before the first TOML table.
+  const firstProviderOffset = codexManagedContent.indexOf('[model_providers.');
+  assert(firstProviderOffset > 0, 'the managed Codex fixture must contain a provider table');
+  const codexRootContent = codexManagedContent.slice(0, firstProviderOffset).trimEnd();
+  const codexProviderContent = codexManagedContent.slice(firstProviderOffset).trim();
+  const codexExtendedContent = [
+    codexRootContent,
+    'notify = [',
+    '  "turn-ended",',
+    '  "approval-requested",',
+    ']',
+    'developer_instructions = """',
+    'Preserve this multiline',
+    '# Managed by Codex Model Profile Manager',
+    '[model_providers.not_a_real_table]',
+    'root-level value.',
+    '"""',
+    '',
+    '[features]',
+    'web_search_request = true',
+    '',
+    codexProviderContent,
+    '',
+    '[model_providers.other_gateway]',
+    'name = "Other gateway"',
+    'base_url = "https://other.example/v1"',
+    'wire_api = "responses"',
+    '',
+    '[desktop]',
+    'followUpQueueMode = "queue"',
+    '',
+    '[mcp_servers.node_repl]',
+    'command = "node"',
+    'args = [ "--experimental-repl-await" ]',
+    '',
+    "[projects.'d:/workspace']",
+    'trust_level = "trusted"',
+    ''
+  ].join('\n');
+  const codexExtendedParsed = TOML.parse(codexExtendedContent);
+  assert.deepStrictEqual(Array.from(codexExtendedParsed.notify), ['turn-ended', 'approval-requested']);
+  assert.strictEqual(codexExtendedParsed.developer_instructions, 'Preserve this multiline\n# Managed by Codex Model Profile Manager\n[model_providers.not_a_real_table]\nroot-level value.\n');
+  assert.strictEqual(codexExtendedParsed.features.web_search_request, true);
+  assert.strictEqual(codexExtendedParsed.model_providers.gateway.notify, undefined, 'notify must remain a root setting');
+  assert.strictEqual(codexExtendedParsed.model_providers.other_gateway.base_url, 'https://other.example/v1');
+  assert.strictEqual(codexExtendedParsed.desktop.followUpQueueMode, 'queue');
+  assert.strictEqual(codexExtendedParsed.mcp_servers.node_repl.command, 'node');
+  assert.strictEqual(codexExtendedParsed.projects['d:/workspace'].trust_level, 'trusted');
+
+  const replacementManagedContent = api.buildManagedConfig(
+    { ...codexExtensionProfile, selectedModel: 'replacement-model', models: ['replacement-model'] },
+    'replacement-model',
+    codexExtensionFiles.token
+  );
+  const mergedExtendedContent = api.mergeManagedCodexConfig(replacementManagedContent, codexExtendedContent);
+  const mergedExtendedParsed = TOML.parse(mergedExtendedContent);
+  assert.strictEqual(mergedExtendedParsed.model, 'replacement-model');
+  assert.strictEqual(mergedExtendedParsed.model_provider, 'gateway');
+  assert.deepStrictEqual(Array.from(mergedExtendedParsed.notify), ['turn-ended', 'approval-requested']);
+  assert.strictEqual(mergedExtendedParsed.developer_instructions, 'Preserve this multiline\n# Managed by Codex Model Profile Manager\n[model_providers.not_a_real_table]\nroot-level value.\n');
+  assert.strictEqual(mergedExtendedParsed.features.web_search_request, true);
+  assert.strictEqual(mergedExtendedParsed.model_providers.other_gateway.base_url, 'https://other.example/v1');
+  assert.strictEqual(mergedExtendedParsed.desktop.followUpQueueMode, 'queue');
+  assert.strictEqual(mergedExtendedParsed.mcp_servers.node_repl.command, 'node');
+  assert.strictEqual(mergedExtendedParsed.projects['d:/workspace'].trust_level, 'trusted');
+  assert.strictEqual(mergedExtendedParsed.model_providers.gateway.notify, undefined, 'merge must not move root settings into a provider');
+  assert.strictEqual(api.parseManagedCodexMetadata([
+    'developer_instructions = """',
+    '# Managed by Codex Model Profile Manager',
+    '# profile_id = fake-profile',
+    '"""'
+  ].join('\n')), undefined, 'a managed marker inside a multiline string must not claim the file');
+  const restoredCodexContent = api.buildRestoredCodexConfig(
+    'notify = [ "original" ]\n\n[model_providers.gateway]\nname = "Original gateway"\nbase_url = "https://original.example/v1"\n',
+    codexExtendedContent,
+    'gateway'
+  );
+  const restoredCodexParsed = TOML.parse(restoredCodexContent);
+  assert.deepStrictEqual(Array.from(restoredCodexParsed.notify), ['turn-ended', 'approval-requested'],
+    'Codex restore must preserve current unmanaged root settings');
+  assert.strictEqual(restoredCodexParsed.desktop.followUpQueueMode, 'queue',
+    'Codex restore must preserve current desktop settings');
+  assert.strictEqual(restoredCodexParsed.model_providers.other_gateway.base_url, 'https://other.example/v1',
+    'Codex restore must preserve other provider sections');
+  assert.strictEqual(restoredCodexParsed.model_providers.gateway.base_url, 'https://original.example/v1',
+    'Codex restore must restore an original provider that reused the managed provider ID');
+  const restoredWithoutOriginal = TOML.parse(api.buildRestoredCodexConfig('', codexExtendedContent, 'gateway'));
+  assert.strictEqual(restoredWithoutOriginal.model, undefined);
+  assert.strictEqual(restoredWithoutOriginal.model_provider, undefined);
+  assert.strictEqual(restoredWithoutOriginal.model_providers.gateway, undefined,
+    'when config.toml was originally absent, restore must remove the managed provider only');
+  assert.strictEqual(restoredWithoutOriginal.mcp_servers.node_repl.command, 'node',
+    'when config.toml was originally absent, Codex-created unmanaged settings must keep the file alive');
+  const restoreMergeDir = path.join(sandbox, 'codex-restore-merge');
+  fs.mkdirSync(restoreMergeDir, { recursive: true });
+  const restoreMergeFiles = {
+    targetId: 'codex',
+    configDir: restoreMergeDir,
+    codexDir: restoreMergeDir,
+    config: path.join(restoreMergeDir, 'config.toml'),
+    backup: path.join(restoreMergeDir, 'config.toml.original-backup'),
+    originalState: path.join(restoreMergeDir, 'config.toml.state.json'),
+    token: path.join(restoreMergeDir, 'runtime-token')
+  };
+  fs.writeFileSync(restoreMergeFiles.config, codexExtendedContent);
+  fs.writeFileSync(restoreMergeFiles.originalState, JSON.stringify({
+    existed: false,
+    lastAppliedHash: api.contentHash(codexManagedContent),
+    managedConfigHash: api.managedCodexConfigHash(codexManagedContent, { maskSecrets: false }),
+    profileId: codexExtensionProfile.id,
+    model: 'extension-model'
+  }));
+  const restoreMergeValues = new Map([
+    [api.environmentStateKey(context, 'modelProfilesV2'), [codexExtensionProfile]],
+    [api.environmentStateKey(context, 'activeCliTargetsV1'), {
+      codex: { profileId: codexExtensionProfile.id, model: 'extension-model' }
+    }]
+  ]);
+  const restoreMergeContext = {
+    globalState: {
+      get(key, fallback) { return restoreMergeValues.has(key) ? restoreMergeValues.get(key) : fallback; },
+      async update(key, value) { if (value === undefined) restoreMergeValues.delete(key); else restoreMergeValues.set(key, value); }
+    },
+    secrets: { async get() { return undefined; } }
+  };
+  await api.restoreOriginal(restoreMergeContext, { show() {} }, {
+    files: restoreMergeFiles,
+    offerReload: false,
+    showError: false,
+    throwOnError: true
+  });
+  const restoredMergeParsed = TOML.parse(fs.readFileSync(restoreMergeFiles.config, 'utf8'));
+  assert.strictEqual(restoredMergeParsed.model_provider, undefined);
+  assert.strictEqual(restoredMergeParsed.model_providers.gateway, undefined);
+  assert.strictEqual(restoredMergeParsed.desktop.followUpQueueMode, 'queue');
+  assert.strictEqual(restoredMergeParsed.mcp_servers.node_repl.command, 'node');
+  assert.strictEqual(api.getActiveTargets(restoreMergeContext).codex, undefined);
+  fs.writeFileSync(codexExtensionFiles.config, codexExtendedContent);
+  fs.writeFileSync(codexExtensionFiles.originalState, JSON.stringify({
+    existed: false,
+    lastAppliedHash: api.contentHash(codexManagedContent),
+    profileId: codexExtensionProfile.id,
+    model: 'extension-model'
+  }));
+  const codexExtensionValues = new Map([
+    [api.environmentStateKey(context, 'modelProfilesV2'), [codexExtensionProfile]],
+    [api.environmentStateKey(context, 'activeCliTargetsV1'), {
+      codex: { profileId: codexExtensionProfile.id, model: 'extension-model' }
+    }]
+  ]);
+  const codexExtensionContext = {
+    globalState: {
+      get(key, fallback) { return codexExtensionValues.has(key) ? codexExtensionValues.get(key) : fallback; },
+      async update(key, value) { if (value === undefined) codexExtensionValues.delete(key); else codexExtensionValues.set(key, value); }
+    },
+    secrets: { async get() { return undefined; } }
+  };
+  const extensionClean = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+  assert.strictEqual(extensionClean.status, 'managed-clean', 'Codex-owned sections must not cause a drift warning');
+  assert.strictEqual(extensionClean.managedMatch, true);
+  assert.strictEqual(extensionClean.hasUnmanagedChanges, true);
+  fs.writeFileSync(
+    codexExtensionFiles.config,
+    codexExtendedContent.replace('model = "extension-model"', 'model = "tampered-model"')
+  );
+  const extensionDrifted = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+  assert.strictEqual(extensionDrifted.status, 'managed-drifted', 'managed provider fields must still detect drift');
+  const unknownManagedField = codexExtendedContent.replace(
+    '[model_providers.gateway]',
+    '[model_providers.gateway]\nprovider_extension = "externally-changed"'
+  );
+  fs.writeFileSync(codexExtensionFiles.config, unknownManagedField);
+  const unknownFieldDrifted = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+  assert.strictEqual(unknownFieldDrifted.status, 'managed-drifted', 'unknown fields in the managed provider subtree must still detect drift');
+  fs.writeFileSync(codexExtensionFiles.config, `${codexExtendedContent}\ninvalid_toml = [`);
+  const invalidTomlDrifted = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+  assert.strictEqual(invalidTomlDrifted.status, 'managed-drifted', 'invalid TOML must never be treated as a clean managed config');
+  assert.throws(
+    () => api.mergeManagedCodexConfig(replacementManagedContent, `${codexExtendedContent}\ninvalid_toml = [`),
+    /invalid TOML|不是有效 TOML/,
+    'an invalid existing config must not be merged'
   );
 
   const raceDir = path.join(sandbox, 'startup-delete-race');
@@ -413,7 +936,10 @@ function plannedProfiles(plan) {
 
   values.set(stateKey('activeCliTargetsV1'), {});
   values.delete(stateKey('activeProfileIdV2'));
-  fs.appendFileSync(legacyFiles.config, '# external edit\n');
+  // A managed-field edit must block automatic recovery.  Additive comments
+  // and Codex-owned sections are intentionally tolerated by the projection,
+  // but changing the provider/model link is unsafe.
+  fs.writeFileSync(legacyFiles.config, legacyContent.replace('model = "remote-model"', 'model = "tampered-model"'));
   assert.strictEqual(await api.reconcileManagedCodexState(context, legacyFiles), undefined, 'hash mismatch must block automatic state recovery');
   assert.strictEqual(api.getActiveTargets(context).codex, undefined, 'hash mismatch must not recreate an active record');
 

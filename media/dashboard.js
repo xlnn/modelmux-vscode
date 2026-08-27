@@ -345,9 +345,13 @@
     if (!openMenu || !openMenu.menu.contains(event.target)) return;
     const items = menuItems(openMenu.menu);
     const current = items.indexOf(document.activeElement);
-    if (event.key === 'Escape' || event.key === 'Tab') {
+    if (event.key === 'Escape') {
       event.preventDefault();
-      closeActiveMenu(event.key === 'Escape');
+      closeActiveMenu(true);
+    } else if (event.key === 'Tab') {
+      // Return focus to the trigger and let the browser perform its normal
+      // forward/backward Tab movement from that stable, visible control.
+      closeActiveMenu(true);
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
       items[(current + 1) % items.length].focus();

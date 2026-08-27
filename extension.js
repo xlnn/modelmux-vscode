@@ -13,6 +13,7 @@ const { URL } = require('url');
 const JSON5 = require('json5');
 const jsonc = require('jsonc-parser');
 const YAML = require('yaml');
+const TOML = require('@iarna/toml');
 const PACKAGE_MANIFEST = require('./package.json');
 
 const execFileAsync = promisify(childProcess.execFile);
@@ -32,7 +33,10 @@ const ORIGINAL_STATE_FILE = 'config.toml.original-state.json';
 const PROFILE_EXPORT_FORMAT = 'cli-model-profile-export';
 const LEGACY_PROFILE_EXPORT_FORMAT = 'codex-model-profile-export';
 const RESERVED_PROVIDER_IDS = new Set(['openai', 'ollama', 'lmstudio', 'amazon-bedrock']);
+const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const EXTENSION_VERSION = PACKAGE_MANIFEST.version;
+const MAX_MODEL_RESPONSE_BYTES = 4 * 1024 * 1024;
+const PENDING_PROFILE_SECRET = Symbol('pendingProfileSecret');
 const CUSTOM_KINDS = new Set(['customResponses', 'customChat', 'customAnthropic']);
 const TARGET_IDS = ['codex', 'claude', 'gemini', 'grok', 'opencode', 'openclaw', 'hermes'];
 const TARGET_LABELS = {
@@ -234,20 +238,47 @@ async function setSelectedTargetId(context, targetId) {
 }
 
 function getActiveTargets(context) {
-  const stored = getEnvironmentState(context, ACTIVE_TARGETS_KEY, {});
+  const stored = getEnvironmentState(context, ACTIVE_TARGETS_KEY, undefined);
   const result = stored && typeof stored === 'object' && !Array.isArray(stored) ? { ...stored } : {};
-  const legacyCodexId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
-  if (!result.codex && legacyCodexId) result.codex = { profileId: legacyCodexId };
+  if (stored === undefined) {
+    const legacyCodexId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
+    if (legacyCodexId) result.codex = { profileId: legacyCodexId };
+  }
   return result;
 }
 
 async function updateActiveTarget(context, targetId, value) {
   const operation = activeStateMutationQueue.catch(() => {}).then(async () => {
+    const previousTargets = getEnvironmentState(context, ACTIVE_TARGETS_KEY, undefined);
+    const previousLegacy = targetId === 'codex'
+      ? getEnvironmentState(context, ACTIVE_PROFILE_KEY, undefined) : undefined;
     const targets = getActiveTargets(context);
     if (value) targets[targetId] = value;
     else delete targets[targetId];
-    await updateEnvironmentState(context, ACTIVE_TARGETS_KEY, targets);
-    if (targetId === 'codex') await updateEnvironmentState(context, ACTIVE_PROFILE_KEY, value && value.profileId);
+    let targetsUpdateStarted = false;
+    let legacyUpdateStarted = false;
+    try {
+      targetsUpdateStarted = true;
+      await updateEnvironmentState(context, ACTIVE_TARGETS_KEY, targets);
+      if (targetId === 'codex') {
+        legacyUpdateStarted = true;
+        await updateEnvironmentState(context, ACTIVE_PROFILE_KEY, value && value.profileId);
+      }
+    } catch (error) {
+      const rollbackErrors = [];
+      if (legacyUpdateStarted) {
+        try { await updateEnvironmentState(context, ACTIVE_PROFILE_KEY, previousLegacy); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (targetsUpdateStarted) {
+        try { await updateEnvironmentState(context, ACTIVE_TARGETS_KEY, previousTargets); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (rollbackErrors.length) {
+        throw new Error(`${error.message || error}；活动 Provider 状态回滚未完成：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+      }
+      throw error;
+    }
   });
   activeStateMutationQueue = operation;
   return operation;
@@ -257,24 +288,29 @@ async function activeManagedTargetForProfile(context, profileId) {
   return (await managedTargetsForProfile(context, profileId))[0];
 }
 
-async function managedTargetsForProfile(context, profileId) {
+async function managedTargetMap(context) {
   const activeTargets = getActiveTargets(context);
-  const result = [];
-  for (const targetId of TARGET_IDS) {
+  const result = new Map();
+  const add = (profileId, targetId) => {
+    if (!profileId) return;
+    const targets = result.get(profileId) || [];
+    if (!targets.includes(targetId)) targets.push(targetId);
+    result.set(profileId, targets);
+  };
+  await Promise.all(TARGET_IDS.map(async targetId => {
     const files = pathsForTarget(targetId);
     const active = activeTargets[targetId];
-    const activeMatches = Boolean(active && active.profileId === profileId);
     const originalState = await readOriginalState(files);
-    const stateMatches = Boolean(originalState && originalState.profileId === profileId);
     const metadata = targetId === 'codex'
       ? parseManagedCodexMetadata(await readConfigText(files.config))
       : undefined;
-    const configMatches = Boolean(metadata && metadata.profileId === profileId);
+    add(originalState && originalState.profileId, targetId);
+    add(metadata && metadata.profileId, targetId);
     const evidenceConflicts = Boolean(
-      (originalState && originalState.profileId && originalState.profileId !== profileId)
-      || (metadata && metadata.profileId && metadata.profileId !== profileId)
+      active && ((originalState && originalState.profileId && originalState.profileId !== active.profileId)
+      || (metadata && metadata.profileId && metadata.profileId !== active.profileId))
     );
-    const activeHasManagedEvidence = activeMatches && !evidenceConflicts && Boolean(
+    const activeHasManagedEvidence = active && !evidenceConflicts && Boolean(
       metadata
       || originalState && (
         originalState.lastAppliedHash
@@ -282,9 +318,13 @@ async function managedTargetsForProfile(context, profileId) {
         || !originalState.restoredAt
       )
     );
-    if (stateMatches || configMatches || activeHasManagedEvidence) result.push(targetId);
-  }
+    if (activeHasManagedEvidence) add(active.profileId, targetId);
+  }));
   return result;
+}
+
+async function managedTargetsForProfile(context, profileId) {
+  return (await managedTargetMap(context)).get(profileId) || [];
 }
 
 async function withTargetMutation(targetId, task) {
@@ -323,6 +363,15 @@ function profileProtocol(profile) {
 function targetCompatibility(targetId, profile) {
   const kind = profile && profile.kind;
   const custom = isCustomProfile(profile);
+  if (custom) {
+    try {
+      validateProviderId(profile.providerId);
+      validateProviderBaseUrl(profile.baseUrl);
+      assertNoSensitiveStaticValues(profile.queryParams, uiText('Query parameters', '查询参数'));
+      assertNoSensitiveStaticValues(profile.httpHeaders, uiText('Static headers', '静态请求头'));
+    }
+    catch (error) { return { supported: false, code: 'profile', reason: error.message || String(error) }; }
+  }
   if (custom && targetId !== 'codex' && !['env', 'none'].includes(profile.authMode)) {
     return { supported: false, code: 'auth', reason: '该 CLI 仅支持环境变量认证或无认证；编辑 Provider 后再启用。' };
   }
@@ -431,7 +480,14 @@ function tomlString(value) {
   return String(value)
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n');
+    .replace(/[\u0000-\u001F\u007F]/g, character => {
+      const escapes = { '\b': '\\b', '\t': '\\t', '\n': '\\n', '\f': '\\f', '\r': '\\r' };
+      return escapes[character] || `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    });
+}
+
+function tomlCommentText(value) {
+  return String(value || '').replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, 512);
 }
 
 function tomlInlineMap(value) {
@@ -468,7 +524,7 @@ function parseJsonMap(value, fieldName) {
 
 function isSensitiveName(value) {
   const normalized = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  return /(?:authorization|proxyauthorization|apikey|accesskey|accesskeyid|accesskeysecret|accesstoken|bearertoken|authtoken|secrettoken|clientsecret|password|passwd|credential|signature|cookie|setcookie|sessionid|privatekey)/.test(normalized);
+  return /(?:authorization|proxyauthorization|auth|apikey|accesskey|accesskeyid|accesskeysecret|accesstoken|bearertoken|authtoken|secrettoken|clientsecret|password|passwd|credential|signature|cookie|setcookie|sessionid|privatekey|token|secret|key)$/.test(normalized);
 }
 
 function assertNoSensitiveStaticValues(map, fieldName) {
@@ -489,10 +545,16 @@ function clampInteger(value, fallback, min, max) {
 
 function modelDiscoveryUrl(profile) {
   const custom = String(profile.modelDiscoveryPath || '/models').trim() || '/models';
-  let result;
-  if (/^https?:\/\//i.test(custom)) result = custom;
-  else result = `${normalizeBaseUrl(profile.baseUrl)}${custom.startsWith('/') ? custom : `/${custom}`}`;
-  const url = new URL(result);
+  const validatedBase = validateProviderBaseUrl(profile.baseUrl);
+  let url;
+  if (/^https?:\/\//i.test(custom)) {
+    url = new URL(custom);
+  } else {
+    url = new URL(validatedBase.normalized);
+    const relative = new URL(custom.startsWith('/') ? custom : `/${custom}`, 'https://modelmux.invalid');
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/${relative.pathname.replace(/^\/+/, '')}`;
+    for (const [key, value] of relative.searchParams) url.searchParams.set(key, value);
+  }
   for (const [key, value] of Object.entries(normalizeStringMap(profile.queryParams))) {
     if (!url.searchParams.has(key)) url.searchParams.set(key, value);
   }
@@ -502,6 +564,16 @@ function modelDiscoveryUrl(profile) {
 function validatedModelDiscoveryUrl(profile, carriesCredentials) {
   const discovery = new URL(modelDiscoveryUrl(profile));
   if (!['http:', 'https:'].includes(discovery.protocol)) throw new Error(uiText('Model discovery only supports HTTP or HTTPS.', '模型发现地址仅支持 http 或 https。'));
+  if (discovery.username || discovery.password) {
+    throw new Error(uiText('The model discovery URL must not contain a username or password.', '模型发现地址不能包含用户名或密码。'));
+  }
+  const sensitiveQuery = Array.from(discovery.searchParams.keys()).filter(isSensitiveName);
+  if (sensitiveQuery.length) {
+    throw new Error(uiText(
+      `The model discovery URL contains credential-like query parameters (${sensitiveQuery.join(', ')}).`,
+      `模型发现地址包含疑似凭据查询参数（${sensitiveQuery.join(', ')}）。`
+    ));
+  }
   const localHost = ['localhost', '127.0.0.1', '::1'].includes(discovery.hostname);
   if (discovery.protocol === 'http:' && !localHost && !profile.allowInsecureHttp) {
     throw new Error(uiText('Remote HTTP transmits model requests or credentials in clear text. Use HTTPS or explicitly allow unsafe remote HTTP.', '远程 HTTP 会明文传输模型请求或凭据。请改用 HTTPS，或明确勾选“允许远程 HTTP（危险）”。'));
@@ -516,9 +588,37 @@ function validatedModelDiscoveryUrl(profile, carriesCredentials) {
 }
 
 function normalizeBaseUrl(value) {
-  let result = String(value || '').trim().replace(/\/+$/, '');
-  result = result.replace(/\/(responses|chat\/completions)$/i, '');
-  return result;
+  const source = String(value || '').trim();
+  const suffixOffset = source.search(/[?#]/);
+  let pathname = suffixOffset < 0 ? source : source.slice(0, suffixOffset);
+  const suffix = suffixOffset < 0 ? '' : source.slice(suffixOffset);
+  pathname = pathname.replace(/\/+$/, '').replace(/\/(responses|chat\/completions)$/i, '');
+  return `${pathname}${suffix}`;
+}
+
+function validateProviderBaseUrl(value) {
+  const normalized = normalizeBaseUrl(value);
+  let url;
+  try { url = new URL(normalized); } catch {
+    throw new Error(uiText('Base URL must be a valid HTTP or HTTPS URL.', 'Base URL 必须是有效的 http 或 https 地址。'));
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(uiText('Base URL only supports HTTP or HTTPS.', 'Base URL 仅支持 http 或 https。'));
+  }
+  if (url.username || url.password) {
+    throw new Error(uiText('Base URL must not contain a username or password. Use the authentication controls instead.', 'Base URL 不能包含用户名或密码，请使用认证设置。'));
+  }
+  if (url.hash) {
+    throw new Error(uiText('Base URL must not contain a URL fragment.', 'Base URL 不能包含 URL 片段。'));
+  }
+  const sensitiveQuery = Array.from(url.searchParams.keys()).filter(isSensitiveName);
+  if (sensitiveQuery.length) {
+    throw new Error(uiText(
+      `Base URL contains credential-like query parameters (${sensitiveQuery.join(', ')}). Use SecretStorage or environment variables instead.`,
+      `Base URL 包含疑似凭据查询参数（${sensitiveQuery.join(', ')}），请改用 SecretStorage 或环境变量。`
+    ));
+  }
+  return { normalized, url };
 }
 
 function providerIdFromName(name) {
@@ -607,6 +707,37 @@ async function saveProfiles(context, profiles) {
   await updateEnvironmentState(context, PROFILES_KEY, profiles);
 }
 
+async function commitProfileAndSecret(context, previousProfiles, nextProfiles, profile, apiKey) {
+  const secretKey = profileSecretKey(context, profile.id);
+  const oldSecret = await context.secrets.get(secretKey);
+  const wantsSecret = isCustomProfile(profile) && profile.authMode === 'secret';
+  const nextSecret = wantsSecret ? String(apiKey || '').trim() || oldSecret : undefined;
+  if (wantsSecret && !nextSecret) {
+    throw new Error(uiText('SecretStorage authentication requires an API key.', 'SecretStorage 认证需要填写 API Key。'));
+  }
+
+  await saveProfiles(context, nextProfiles);
+  try {
+    if (wantsSecret) {
+      if (nextSecret !== oldSecret) await context.secrets.store(secretKey, nextSecret);
+    } else if (oldSecret !== undefined) {
+      await context.secrets.delete(secretKey);
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    try {
+      if (oldSecret !== undefined) await context.secrets.store(secretKey, oldSecret);
+      else await context.secrets.delete(secretKey);
+    } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    try { await saveProfiles(context, previousProfiles); }
+    catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    if (rollbackErrors.length) {
+      throw new Error(`${error.message || error}；回滚 Provider/SecretStorage 时也失败：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+    }
+    throw error;
+  }
+}
+
 async function migrateLegacyProfile(context) {
   if (runtimeEnvironmentInfo().isRemote) return;
   const existing = getProfiles(context);
@@ -657,7 +788,7 @@ function reasoningLine(profile, model) {
 
 function buildManagedConfig(profile, model, tokenPath, resolvedSecret = undefined) {
   const settings = readGlobalSettings();
-  const common = `${MANAGED_MARKER}\n# profile_id = ${profile.id}\n# profile_name = ${profile.name}\nmodel = "${tomlString(model)}"\nmodel_provider = "${tomlString(providerIdForProfile(profile))}"\n\napproval_policy = "${tomlString(settings.approvalPolicy)}"\nsandbox_mode = "${tomlString(settings.sandboxMode)}"\n${reasoningLine(profile, model)}`;
+  const common = `${MANAGED_MARKER}\n# profile_id = ${tomlCommentText(profile.id)}\n# profile_name = ${tomlCommentText(profile.name)}\nmodel = "${tomlString(model)}"\nmodel_provider = "${tomlString(providerIdForProfile(profile))}"\n\napproval_policy = "${tomlString(settings.approvalPolicy)}"\nsandbox_mode = "${tomlString(settings.sandboxMode)}"\n${reasoningLine(profile, model)}`;
 
   if (['openai', 'ollama', 'lmstudio'].includes(profile.kind)) return `${common}\n`;
 
@@ -670,10 +801,13 @@ function buildManagedConfig(profile, model, tokenPath, resolvedSecret = undefine
     return bedrock;
   }
 
+  const validatedBase = validateProviderBaseUrl(profile.baseUrl);
+  assertNoSensitiveStaticValues(profile.queryParams, uiText('Query parameters', '查询参数'));
+  assertNoSensitiveStaticValues(profile.httpHeaders, uiText('Static headers', '静态请求头'));
   const requestRetries = clampInteger(profile.requestMaxRetries, 0, 0, 20);
   const streamRetries = clampInteger(profile.streamMaxRetries, 2, 0, 20);
   const streamTimeout = clampInteger(profile.streamIdleTimeoutMs, 300000, 1000, 3600000);
-  let result = `${common}\n[model_providers.${profile.providerId}]\nname = "${tomlString(profile.providerName || profile.name)}"\nbase_url = "${tomlString(normalizeBaseUrl(profile.baseUrl))}"\nwire_api = "responses"\nrequest_max_retries = ${requestRetries}\nstream_max_retries = ${streamRetries}\nstream_idle_timeout_ms = ${streamTimeout}\n`;
+  let result = `${common}\n[model_providers.${profile.providerId}]\nname = "${tomlString(profile.providerName || profile.name)}"\nbase_url = "${tomlString(validatedBase.normalized)}"\nwire_api = "responses"\nrequest_max_retries = ${requestRetries}\nstream_max_retries = ${streamRetries}\nstream_idle_timeout_ms = ${streamTimeout}\n`;
 
   if (profile.supportsWebsockets) result += 'supports_websockets = true\n';
   if (Object.keys(normalizeStringMap(profile.queryParams)).length) result += `query_params = ${tomlInlineMap(profile.queryParams)}\n`;
@@ -709,7 +843,7 @@ function providerIdForProfile(profile) {
   if (profile.kind === 'ollama') return 'ollama';
   if (profile.kind === 'lmstudio') return 'lmstudio';
   if (profile.kind === 'bedrock') return 'amazon-bedrock';
-  return profile.providerId;
+  return validateProviderId(profile.providerId);
 }
 
 async function ensureSupportedPlatform() {
@@ -721,11 +855,14 @@ async function ensureSupportedPlatform() {
 }
 
 function windowsAccountName() {
-  const username = String(process.env.USERNAME || '').trim();
+  let username = '';
+  try { username = String(os.userInfo().username || '').trim(); } catch {}
+  if (!username) username = String(process.env.USERNAME || '').trim();
   const domain = String(process.env.USERDOMAIN || '').trim();
+  if (username.includes('\\') || username.includes('@')) return username;
   if (username && domain) return `${domain}\\${username}`;
   if (username) return username;
-  try { return os.userInfo().username; } catch { return ''; }
+  return '';
 }
 
 async function verifyWindowsPrivateAcl(target) {
@@ -767,6 +904,50 @@ async function ensureDirectory(dir, privateOnWindows = false) {
   }
 }
 
+async function ensurePrivateRuntimeDirectory(tokenPath) {
+  const directory = path.resolve(path.dirname(tokenPath));
+  if (process.platform === 'win32') {
+    await ensureDirectory(directory, true);
+    return;
+  }
+
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+  const validate = async target => {
+    const stat = await fs.promises.lstat(target);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`拒绝使用符号链接或非目录作为运行时密钥目录：${target}`);
+    }
+    if (uid !== undefined && stat.uid !== uid) {
+      throw new Error(`运行时密钥目录所有者不匹配：${target}`);
+    }
+    await fs.promises.chmod(target, 0o700);
+    const hardened = await fs.promises.lstat(target);
+    if ((hardened.mode & 0o077) !== 0) {
+      throw new Error(`运行时密钥目录权限不安全：${target}`);
+    }
+  };
+
+  const tempRoot = path.resolve(os.tmpdir());
+  const relative = path.relative(tempRoot, directory);
+  if (relative && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)) {
+    let current = tempRoot;
+    for (const segment of relative.split(path.sep).filter(Boolean)) {
+      current = path.join(current, segment);
+      try {
+        await validate(current);
+      } catch (error) {
+        if (error && error.code !== 'ENOENT') throw error;
+        try { await fs.promises.mkdir(current, { mode: 0o700 }); }
+        catch (mkdirError) { if (!mkdirError || mkdirError.code !== 'EEXIST') throw mkdirError; }
+        await validate(current);
+      }
+    }
+    return;
+  }
+
+  await validate(directory);
+}
+
 async function writePrivateFile(file, content, privateParentOnWindows = false) {
   await ensureDirectory(path.dirname(file), privateParentOnWindows);
 
@@ -801,73 +982,216 @@ async function writePrivateFile(file, content, privateParentOnWindows = false) {
   await applyPrivatePermissions(file, false);
 }
 
-async function writeAtomic(file, content) {
+async function readRegularFileSnapshot(file) {
+  let stat;
+  try { stat = await fs.promises.lstat(file); }
+  catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return { exists: false, configExists: false, currentHash: undefined, content: '' };
+    }
+    throw error;
+  }
+  if (stat.isSymbolicLink()) throw new Error(`拒绝读取符号链接或重解析链接：${file}`);
+  if (!stat.isFile()) throw new Error(`目标不是普通文件：${file}`);
+  const content = await fs.promises.readFile(file, 'utf8');
+  const after = await fs.promises.lstat(file);
+  if (after.isSymbolicLink() || !after.isFile()
+    || stat.dev !== after.dev || stat.ino !== after.ino || stat.size !== after.size || stat.mtimeMs !== after.mtimeMs) {
+    throw new Error(`${file} 在读取期间发生了变化。为避免覆盖外部改动，本次操作已停止。`);
+  }
+  return { exists: true, configExists: true, currentHash: contentHash(content), content };
+}
+
+function assertSnapshotMatches(file, actual, expected) {
+  if (!expected) return;
+  const expectedExists = expected.configExists !== undefined ? expected.configExists : expected.exists;
+  if (actual.exists !== Boolean(expectedExists)
+    || actual.exists && expected.currentHash && actual.currentHash !== expected.currentHash) {
+    throw new Error(`${file} 在确认应用后又发生了变化。为避免覆盖新的外部改动，本次应用已停止，请重试。`);
+  }
+}
+
+async function writeAtomic(file, content, expectedSnapshot, hooks = {}) {
   const dir = path.dirname(file);
   await ensureDirectory(dir, false);
   const baseName = path.basename(file).replace(/[^A-Za-z0-9_.-]+/g, '_');
-  const temp = path.join(dir, `.${baseName}.tmp-${process.pid}-${Date.now()}`);
-  const displaced = path.join(dir, `.${baseName}.previous-${process.pid}-${Date.now()}`);
-  let movedExisting = false;
+  const operationId = `${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+  const temp = path.join(dir, `.${baseName}.tmp-${operationId}`);
+  const displaced = path.join(dir, `.${baseName}.previous-${operationId}`);
+  let displacedExisting = false;
   let installedReplacement = false;
+  let preserveDisplaced = false;
+  const replacementHash = contentHash(content);
   try {
     await writePrivateFile(temp, content);
-    if (process.platform === 'win32' && await fileExists(file)) {
-      await fs.promises.rename(file, displaced);
-      movedExisting = true;
-    }
-    let renameError;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        await fs.promises.rename(temp, file);
-        installedReplacement = true;
-        renameError = undefined;
-        break;
-      } catch (error) {
-        renameError = error;
-        if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
-        await new Promise(resolve => setTimeout(resolve, 80 * (attempt + 1)));
+    const sourceSnapshot = await readRegularFileSnapshot(file);
+    assertSnapshotMatches(file, sourceSnapshot, expectedSnapshot);
+    if (hooks.beforeDisplace) await hooks.beforeDisplace({ file, sourceSnapshot });
+    if (sourceSnapshot.exists) {
+      await fs.promises.copyFile(file, displaced, fs.constants.COPYFILE_EXCL);
+      displacedExisting = true;
+      await applyPrivatePermissions(displaced, false);
+      const displacedSnapshot = await readRegularFileSnapshot(displaced);
+      if (displacedSnapshot.currentHash !== sourceSnapshot.currentHash) {
+        throw new Error(`${file} 的原文件恢复副本校验失败，本次写入已停止。`);
+      }
+      if (hooks.afterDisplace) await hooks.afterDisplace({ file, displaced, sourceSnapshot });
+      const latestSource = await readRegularFileSnapshot(file);
+      if (!latestSource.exists || latestSource.currentHash !== sourceSnapshot.currentHash) {
+        throw new Error(`${file} 在准备原子替换期间发生了变化，本次写入已停止。`);
       }
     }
-    if (renameError) throw renameError;
+    if (!sourceSnapshot.exists) {
+      // A hard-link install is exclusive: a concurrent creator gets EEXIST
+      // instead of being silently overwritten by rename(temp, file).
+      await fs.promises.link(temp, file);
+      installedReplacement = true;
+      if (hooks.afterLinkInstall) await hooks.afterLinkInstall({ file, temp, sourceSnapshot });
+      // Mark the replacement before removing the temporary directory entry.
+      // If cleanup fails, the formal target is still installed and must be
+      // removed by the rollback path rather than being left behind.
+      await fs.promises.rm(temp);
+    } else {
+      let renameError;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          await fs.promises.rename(temp, file);
+          installedReplacement = true;
+          renameError = undefined;
+          break;
+        } catch (error) {
+          renameError = error;
+          if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+          await new Promise(resolve => setTimeout(resolve, 80 * (attempt + 1)));
+        }
+      }
+      if (renameError) throw renameError;
+    }
+    if (hooks.afterInstall) await hooks.afterInstall({ file, displaced, sourceSnapshot });
     await applyPrivatePermissions(file, false);
-    if (movedExisting) await fs.promises.rm(displaced, { force: true });
+    if (displacedExisting) {
+      await fs.promises.rm(displaced);
+      displacedExisting = false;
+    }
   } catch (error) {
-    if (installedReplacement && process.platform === 'win32') await fs.promises.rm(file, { force: true }).catch(() => {});
-    if (movedExisting && await fileExists(displaced)) {
-      await fs.promises.rename(displaced, file).catch(() => {});
+    try {
+      if (installedReplacement) {
+        const installed = await readRegularFileSnapshot(file);
+        if (!installed.exists || installed.currentHash !== replacementHash) {
+          throw new Error('目标文件在替换后又发生了变化，不能自动覆盖该外部改动');
+        }
+        await fs.promises.rm(file);
+        installedReplacement = false;
+      }
+      if (displacedExisting && !(await readRegularFileSnapshot(file)).exists) {
+        await fs.promises.rename(displaced, file);
+        displacedExisting = false;
+      } else if (displacedExisting) {
+        const current = await readRegularFileSnapshot(file);
+        const previous = await readRegularFileSnapshot(displaced);
+        if (!current.exists || current.currentHash !== previous.currentHash) {
+          throw new Error('原目标已发生变化，不能自动丢弃恢复副本');
+        }
+        await fs.promises.rm(displaced);
+        displacedExisting = false;
+      }
+    } catch (restoreError) {
+      preserveDisplaced = displacedExisting;
+      const location = preserveDisplaced ? `，恢复副本已保留在 ${displaced}` : '';
+      throw new Error(`${error.message || error}；原文件回滚失败${location}：${restoreError.message || restoreError}`, { cause: error });
     }
     throw error;
   } finally {
     await fs.promises.rm(temp, { force: true }).catch(() => {});
-    await fs.promises.rm(displaced, { force: true }).catch(() => {});
+    if (!preserveDisplaced && displacedExisting) await fs.promises.rm(displaced, { force: true }).catch(() => {});
   }
+}
+
+async function removeFileAtomicallyIfUnchanged(file, expectedSnapshot, hooks = {}) {
+  const current = await readRegularFileSnapshot(file);
+  assertSnapshotMatches(file, current, expectedSnapshot);
+  if (!current.exists) return false;
+  const baseName = path.basename(file).replace(/[^A-Za-z0-9_.-]+/g, '_');
+  const operationId = `${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+  const tombstone = path.join(path.dirname(file), `.${baseName}.removed-${operationId}`);
+  let moved = false;
+  let preserveTombstone = false;
+  try {
+    await fs.promises.rename(file, tombstone);
+    moved = true;
+    if (hooks.afterMove) await hooks.afterMove({ file, tombstone, current });
+    const displaced = await readRegularFileSnapshot(tombstone);
+    if (!displaced.exists || displaced.currentHash !== current.currentHash) {
+      throw new Error(`${file} 在准备删除期间发生了变化，本次删除已停止。`);
+    }
+    if ((await readRegularFileSnapshot(file)).exists) {
+      throw new Error(`${file} 在删除期间被其它程序重新创建，本次删除已停止。`);
+    }
+    await fs.promises.rm(tombstone);
+    moved = false;
+    return true;
+  } catch (error) {
+    if (moved) {
+      try {
+        const replacement = await readRegularFileSnapshot(file);
+        if (replacement.exists) {
+          preserveTombstone = true;
+          throw new Error(`目标路径已被其它程序重新创建，原内容保留在 ${tombstone}`);
+        }
+        await fs.promises.rename(tombstone, file);
+        moved = false;
+      } catch (restoreError) {
+        preserveTombstone = true;
+        throw new Error(`${error.message || error}；删除回滚失败，原内容保留在 ${tombstone}：${restoreError.message || restoreError}`, { cause: error });
+      }
+    }
+    throw error;
+  } finally {
+    if (!preserveTombstone && moved) await fs.promises.rm(tombstone, { force: true }).catch(() => {});
+  }
+}
+
+async function restoreFileSnapshot(file, snapshot, expectedCurrent) {
+  if (snapshot.exists) {
+    await writeAtomic(file, snapshot.content, expectedCurrent);
+    return;
+  }
+  const current = await readRegularFileSnapshot(file);
+  assertSnapshotMatches(file, current, expectedCurrent);
+  if (current.exists) await removeFileAtomicallyIfUnchanged(file, current);
 }
 
 async function fileExists(file) {
   try {
     await fs.promises.access(file, fs.constants.F_OK);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
 async function readConfigText(file) {
-  try {
-    return await fs.promises.readFile(file, 'utf8');
-  } catch {
-    return '';
-  }
+  const snapshot = await readRegularFileSnapshot(file);
+  return snapshot.exists ? snapshot.content : '';
 }
 
 async function isManagedConfig(configPath) {
   const text = await readConfigText(configPath);
-  return text.includes(MANAGED_MARKER) || text.includes(OLD_MANAGED_MARKER);
+  if (hasTomlControlLine(text, UNIVERSAL_MANAGED_MARKER)) return true;
+  return Boolean(parseManagedCodexMetadata(text));
 }
 
 async function readOriginalState(files) {
+  let snapshot;
   try {
-    const parsed = JSON.parse(await fs.promises.readFile(files.originalState, 'utf8'));
+    snapshot = await readRegularFileSnapshot(files.originalState);
+  } catch (error) {
+    throw new Error(`无法安全读取原始状态记录 ${files.originalState}：${error.message || error}`, { cause: error });
+  }
+  if (!snapshot.exists) return undefined;
+  try {
+    const parsed = JSON.parse(snapshot.content);
     return parsed && typeof parsed.existed === 'boolean' ? parsed : undefined;
   } catch { return undefined; }
 }
@@ -884,28 +1208,57 @@ async function writeOriginalState(files, existed, extra = {}) {
   }, null, 2));
 }
 
-async function ensureOriginalBackup(files) {
-  const existingState = await readOriginalState(files);
-  if (existingState) return false;
+async function removeOriginalBackupState(files) {
+  // Delete the backup first. If that fails, retain the state that explains who
+  // owns it instead of creating a new state record that points at stale data.
+  await fs.promises.rm(files.backup, { force: true });
+  await fs.promises.rm(files.originalState, { force: true });
+}
 
-  if (!(await fileExists(files.config))) {
+async function ensureOriginalBackup(files, expectedSnapshot) {
+  const existingState = await readOriginalState(files);
+  if (existingState && existingState.lastAppliedHash) return false;
+
+  // A restored or interrupted takeover no longer owns the target. Capture the
+  // current original again so a later restore cannot resurrect a stale backup
+  // or delete a configuration created after the previous restore/cancellation.
+  if (existingState) {
+    await removeOriginalBackupState(files);
+  } else if (await fileExists(files.backup)) {
+    throw new Error(`发现没有状态记录的旧备份：${files.backup}。为避免恢复错误配置，请先手动核对或移走该文件。`);
+  }
+
+  const sourceSnapshot = await readRegularFileSnapshot(files.config);
+  assertSnapshotMatches(files.config, sourceSnapshot, expectedSnapshot);
+  if (!sourceSnapshot.exists) {
     await writeOriginalState(files, false);
     return true;
   }
 
-  if (await isManagedConfig(files.config)) {
+  const alreadyManaged = files.targetId === 'grok'
+    ? hasTomlControlLine(sourceSnapshot.content, UNIVERSAL_MANAGED_MARKER)
+    : (!files.targetId || files.targetId === 'codex') && parseManagedCodexMetadata(sourceSnapshot.content);
+  if (alreadyManaged) {
     throw new Error('当前 config.toml 已由切换器管理，但原始状态记录不存在。请先手动恢复原配置，避免覆盖。');
   }
-  if (!(await fileExists(files.backup))) {
-    try {
-      await fs.promises.copyFile(files.config, files.backup, fs.constants.COPYFILE_EXCL);
-      await applyPrivatePermissions(files.backup, false);
-    } catch (error) {
-      await fs.promises.rm(files.backup, { force: true }).catch(() => {});
-      throw error;
+  let backupCreated = false;
+  try {
+    await fs.promises.copyFile(files.config, files.backup, fs.constants.COPYFILE_EXCL);
+    backupCreated = true;
+    await applyPrivatePermissions(files.backup, false);
+    const backupSnapshot = await readRegularFileSnapshot(files.backup);
+    const latestSource = await readRegularFileSnapshot(files.config);
+    if (backupSnapshot.currentHash !== sourceSnapshot.currentHash
+      || !latestSource.exists || latestSource.currentHash !== sourceSnapshot.currentHash) {
+      throw new Error(`${files.config} 在创建原始备份期间发生了变化，本次操作已停止。`);
     }
+    const originalHash = backupSnapshot.currentHash;
+    await writeOriginalState(files, true, { originalHash });
+  } catch (error) {
+    if (backupCreated) await fs.promises.rm(files.backup, { force: true }).catch(() => {});
+    await fs.promises.rm(files.originalState, { force: true }).catch(() => {});
+    throw error;
   }
-  await writeOriginalState(files, true);
   return true;
 }
 
@@ -913,23 +1266,310 @@ function contentHash(content) {
   return crypto.createHash('sha256').update(String(content || ''), 'utf8').digest('hex');
 }
 
+// Codex may append its own settings (desktop integration, MCP servers,
+// project trust, etc.) to the same file after ModelMux writes the provider.
+// Those settings are outside ModelMux's ownership boundary and must not turn
+// an otherwise valid provider into a drift warning. Keep this projection
+// deliberately small: every field ModelMux writes is still checked, while
+// unknown Codex fields and sections are ignored.
+const MANAGED_CODEX_ROOT_KEYS = new Set([
+  'model', 'model_provider', 'approval_policy', 'sandbox_mode', 'model_reasoning_effort'
+]);
+
+function managedCodexConfigProjection(content, options = {}) {
+  const maskSecrets = options.maskSecrets !== false;
+  const source = String(content || '').replace(/^\uFEFF/, '');
+  let parsed;
+  try { parsed = TOML.parse(source); }
+  catch { return undefined; }
+  const providerId = typeof parsed.model_provider === 'string' ? parsed.model_provider : '';
+  const document = splitTomlDocument(source);
+  const rootLines = document.rootControlIndexes.map(index => document.root[index].trim());
+  const metadata = rootLines.filter(line => line === MANAGED_MARKER || line === OLD_MANAGED_MARKER
+    || /^#\s*profile_(?:id|name)\s*=/.test(line));
+  const root = {};
+  for (const key of MANAGED_CODEX_ROOT_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(parsed, key)) root[key] = parsed[key];
+  }
+  const provider = providerId && parsed.model_providers && parsed.model_providers[providerId];
+
+  const canonicalize = (value, key = '') => {
+    if (maskSecrets && key === 'experimental_bearer_token') return '<secret>';
+    if (value instanceof Date) return value.toISOString();
+    if (Array.isArray(value)) return value.map(item => canonicalize(item));
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.keys(value).sort().map(name => [name, canonicalize(value[name], name)]));
+    }
+    return value;
+  };
+  return JSON.stringify(canonicalize({ metadata, root, provider: provider || null }));
+}
+
+function managedCodexConfigHash(content, options = {}) {
+  const projection = managedCodexConfigProjection(content, options);
+  return projection === undefined ? undefined : contentHash(projection);
+}
+
+async function expectedManagedCodexProjection(context, files, originalState, active) {
+  if (!originalState || !originalState.profileId) return undefined;
+  const profile = getProfiles(context).find(item => item.id === originalState.profileId);
+  if (!profile) return undefined;
+  const model = active && active.model || originalState.model || profile.selectedModel;
+  if (!model) return undefined;
+  try {
+    let secret;
+    let maskSecrets = true;
+    if (process.platform === 'win32' && profile.kind === 'customResponses'
+      && ['secret', 'bearer'].includes(profile.authMode)) {
+      secret = context && context.secrets && await context.secrets.get(profileSecretKey(context, profile.id));
+      if (!secret) return undefined;
+      maskSecrets = false;
+    }
+    return {
+      value: managedCodexConfigProjection(buildManagedConfig(profile, model, files.token, secret), { maskSecrets }),
+      maskSecrets
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function splitTomlDocument(content) {
+  const lines = String(content || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  const indexes = [];
+  const controlIndexes = [];
+  let quote = '';
+  let bracketDepth = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!quote && bracketDepth === 0) controlIndexes.push(index);
+    if (!quote && bracketDepth === 0
+      && /^\s*\[{1,2}[^\r\n]+\]{1,2}\s*(?:#.*)?$/.test(line)) {
+      indexes.push(index);
+      continue;
+    }
+
+    for (let offset = 0; offset < line.length; offset += 1) {
+      const character = line[offset];
+      const triple = line.slice(offset, offset + 3);
+      if (quote === '"""' || quote === "'''") {
+        if (triple === quote) {
+          let backslashes = 0;
+          for (let cursor = offset - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) backslashes += 1;
+          if (quote === "'''" || backslashes % 2 === 0) { quote = ''; offset += 2; }
+        }
+        continue;
+      }
+      if (quote === '"') {
+        if (character === '\\') offset += 1;
+        else if (character === '"') quote = '';
+        continue;
+      }
+      if (quote === "'") {
+        if (character === "'") quote = '';
+        continue;
+      }
+      if (character === '#') break;
+      if (triple === '"""' || triple === "'''") { quote = triple; offset += 2; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === '[' || character === '{') bracketDepth += 1;
+      else if (character === ']' || character === '}') bracketDepth = Math.max(0, bracketDepth - 1);
+    }
+  }
+  const rootEnd = indexes.length ? indexes[0] : lines.length;
+  const sections = indexes.map((start, index) => ({
+    start,
+    header: lines[start].trim(),
+    lines: lines.slice(start, indexes[index + 1] === undefined ? lines.length : indexes[index + 1])
+  }));
+  return {
+    root: lines.slice(0, rootEnd),
+    rootControlIndexes: controlIndexes.filter(index => index < rootEnd),
+    controlIndexes,
+    sections
+  };
+}
+
+function hasTomlControlLine(content, expected) {
+  const lines = String(content || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  return splitTomlDocument(content).controlIndexes.some(index => lines[index].trim() === expected);
+}
+
+function simpleModelProviderSectionId(header) {
+  const match = String(header || '').match(/^\[\s*model_providers\.([A-Za-z_][A-Za-z0-9_-]*)(?:\.|\s*\])/);
+  return match && match[1];
+}
+
+function unmanagedCodexRootLines(lines) {
+  const retained = [];
+  const controlIndexes = new Set(splitTomlDocument(lines.join('\n')).rootControlIndexes);
+  let skippingManagedValue = false;
+  let bracketDepth = 0;
+  let quote = '';
+  const updateState = text => {
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index];
+      const triple = text.slice(index, index + 3);
+      if (quote === '"""' || quote === "'''") {
+        if (triple === quote) { quote = ''; index += 2; }
+        continue;
+      }
+      if (quote === '"') {
+        if (character === '\\') { index += 1; continue; }
+        if (character === '"') quote = '';
+        continue;
+      }
+      if (quote === "'") {
+        if (character === "'") quote = '';
+        continue;
+      }
+      if (triple === '"""' || triple === "'''") { quote = triple; index += 2; continue; }
+      if (character === '"' || character === "'") { quote = character; continue; }
+      if (character === '#' && bracketDepth === 0) break;
+      if (character === '[' || character === '{') bracketDepth += 1;
+      else if (character === ']' || character === '}') bracketDepth = Math.max(0, bracketDepth - 1);
+    }
+  };
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
+    const line = rawLine.trim();
+    const isControlLine = controlIndexes.has(lineIndex);
+    if (!skippingManagedValue && isControlLine && (line === MANAGED_MARKER || line === OLD_MANAGED_MARKER
+      || /^#\s*profile_(?:id|name)\s*=/.test(line))) continue;
+    if (!skippingManagedValue && isControlLine) {
+      const keyMatch = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+      if (keyMatch && MANAGED_CODEX_ROOT_KEYS.has(keyMatch[1])) {
+        bracketDepth = 0; quote = '';
+        updateState(line.slice(keyMatch[0].length));
+        skippingManagedValue = bracketDepth > 0 || Boolean(quote);
+        continue;
+      }
+      retained.push(rawLine);
+      continue;
+    }
+    if (!skippingManagedValue) {
+      retained.push(rawLine);
+      continue;
+    }
+    updateState(line);
+    if (bracketDepth === 0 && !quote) skippingManagedValue = false;
+  }
+  return retained;
+}
+
+function mergeManagedCodexConfig(desired, current) {
+  const desiredSource = String(desired || '');
+  const currentSource = String(current || '');
+  let desiredParsed;
+  let currentParsed;
+  try { desiredParsed = TOML.parse(desiredSource); }
+  catch (error) { throw new Error(`ModelMux 生成了无效 TOML：${error.message || error}`); }
+  if (!currentSource.trim()) return desiredSource;
+  try { currentParsed = TOML.parse(currentSource); }
+  catch (error) {
+    throw new Error(uiText(
+      `The existing Codex config.toml is invalid TOML and cannot be merged safely: ${error.message || error}`,
+      `现有 Codex config.toml 不是有效 TOML，无法安全合并：${error.message || error}`
+    ));
+  }
+
+  const desiredDocument = splitTomlDocument(desiredSource);
+  const currentDocument = splitTomlDocument(currentSource);
+  const managedProviderIds = new Set();
+  if (typeof desiredParsed.model_provider === 'string') managedProviderIds.add(desiredParsed.model_provider);
+  const currentHasMarker = currentDocument.rootControlIndexes.some(index => {
+    const line = currentDocument.root[index].trim();
+    return line === MANAGED_MARKER || line === OLD_MANAGED_MARKER;
+  });
+  if (currentHasMarker && typeof currentParsed.model_provider === 'string') {
+    managedProviderIds.add(currentParsed.model_provider);
+  }
+
+  const retainedRoot = unmanagedCodexRootLines(currentDocument.root).join('\n').trim();
+  const retainedSections = currentDocument.sections
+    .filter(section => {
+      const providerId = simpleModelProviderSectionId(section.header);
+      return !providerId || !managedProviderIds.has(providerId);
+    })
+    .map(section => section.lines.join('\n').trimEnd())
+    .filter(Boolean)
+    .join('\n\n');
+  const parts = [desiredDocument.root.join('\n').trimEnd(), retainedRoot,
+    desiredDocument.sections.map(section => section.lines.join('\n').trimEnd()).filter(Boolean).join('\n\n'),
+    retainedSections].filter(Boolean);
+  const merged = `${parts.join('\n\n')}\n`;
+  try { TOML.parse(merged); }
+  catch (error) { throw new Error(`合并后的 Codex config.toml 不是有效 TOML：${error.message || error}`); }
+  return merged;
+}
+
+function buildRestoredCodexConfig(original, current, managedProviderId) {
+  const parse = (source, label) => {
+    if (!String(source || '').trim()) return {};
+    try { return TOML.parse(String(source)); }
+    catch (error) { throw new Error(`${label}不是有效 TOML，无法安全恢复：${error.message || error}`); }
+  };
+  const clone = value => {
+    if (value instanceof Date) return new Date(value.getTime());
+    if (Array.isArray(value)) return value.map(clone);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)]));
+    }
+    return value;
+  };
+  const originalParsed = parse(original, 'Codex 原始备份');
+  const currentParsed = parse(current, '当前 Codex 配置');
+  const restored = clone(originalParsed);
+  const providerToRemove = String(managedProviderId || currentParsed.model_provider || '');
+
+  for (const [key, value] of Object.entries(currentParsed)) {
+    if (MANAGED_CODEX_ROOT_KEYS.has(key)) continue;
+    if (key !== 'model_providers') {
+      restored[key] = clone(value);
+      continue;
+    }
+    const providers = restored.model_providers && typeof restored.model_providers === 'object'
+      ? clone(restored.model_providers) : {};
+    for (const [providerId, provider] of Object.entries(value || {})) {
+      if (providerId !== providerToRemove) providers[providerId] = clone(provider);
+    }
+    if (Object.keys(providers).length) restored.model_providers = providers;
+    else delete restored.model_providers;
+  }
+
+  if (!Object.keys(restored).length) return '';
+  const result = TOML.stringify(restored);
+  try { TOML.parse(result); }
+  catch (error) { throw new Error(`恢复后的 Codex config.toml 不是有效 TOML：${error.message || error}`); }
+  return result.endsWith('\n') ? result : `${result}\n`;
+}
+
+async function managedCodexConfigMatches(context, files, content, originalState, active) {
+  const currentHash = managedCodexConfigHash(content, { maskSecrets: false });
+  if (!currentHash) return false;
+  if (originalState && typeof originalState.managedConfigHash === 'string') {
+    return currentHash === originalState.managedConfigHash;
+  }
+  const expected = await expectedManagedCodexProjection(context, files, originalState, active);
+  return Boolean(expected && managedCodexConfigProjection(content, { maskSecrets: expected.maskSecrets }) === expected.value);
+}
+
 function parseManagedCodexMetadata(content) {
   const text = String(content || '');
-  if (!text.includes(MANAGED_MARKER) && !text.includes(OLD_MANAGED_MARKER)) return undefined;
+  const document = splitTomlDocument(text);
+  const rootLines = document.rootControlIndexes.map(index => document.root[index].trim());
+  if (!rootLines.includes(MANAGED_MARKER) && !rootLines.includes(OLD_MANAGED_MARKER)) return undefined;
 
-  const profileMatch = text.match(/^#\s*profile_id\s*=\s*([^\r\n]+?)\s*$/m);
+  const profileMatch = rootLines.join('\n').match(/^#\s*profile_id\s*=\s*([^\r\n]+?)\s*$/m);
   const rawProfileId = profileMatch && profileMatch[1].trim();
   const profileId = rawProfileId && /^[A-Za-z0-9_.-]{1,128}$/.test(rawProfileId)
     ? rawProfileId
     : undefined;
-  const modelMatch = text.match(/^\s*model\s*=\s*("(?:\\.|[^"\\])*")\s*(?:#.*)?$/m);
   let model;
-  if (modelMatch) {
-    try {
-      const parsed = JSON.parse(modelMatch[1]);
-      if (typeof parsed === 'string' && parsed.trim() && parsed.length <= 512) model = parsed;
-    } catch {}
-  }
+  try {
+    const parsed = TOML.parse(text);
+    if (typeof parsed.model === 'string' && parsed.model.trim() && parsed.model.length <= 512) model = parsed.model;
+  } catch {}
   return { profileId, model };
 }
 
@@ -950,18 +1590,10 @@ function resolveManagedCodexProfile(context, content, originalState, active = ge
 }
 
 function tomlSectionLines(content, sectionName) {
-  const lines = String(content || '').replace(/^\uFEFF/, '').split(/\r?\n/);
   const header = `[${sectionName}]`;
-  const indexes = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].trim() === header) indexes.push(index);
-  }
-  if (indexes.length !== 1) return undefined;
-  let end = lines.length;
-  for (let index = indexes[0] + 1; index < lines.length; index += 1) {
-    if (/^\s*\[/.test(lines[index])) { end = index; break; }
-  }
-  return lines.slice(indexes[0] + 1, end).map(line => line.trim()).filter(Boolean);
+  const matches = splitTomlDocument(content).sections.filter(section => section.header === header);
+  if (matches.length !== 1) return undefined;
+  return matches[0].lines.slice(1).map(line => line.trim()).filter(Boolean);
 }
 
 function hasSingleTomlLine(lines, expected, key) {
@@ -994,16 +1626,20 @@ function canRecreateRuntimeTokenFromManagedConfig(
   if (metadata && metadata.profileId && metadata.profileId !== profile.id) return false;
   if (stateProfileId && stateProfileId !== profile.id) return false;
 
-  const allLines = String(content || '').replace(/^\uFEFF/, '').split(/\r?\n/);
-  const firstSection = allLines.findIndex(line => /^\s*\[/.test(line));
-  const rootLines = allLines.slice(0, firstSection < 0 ? allLines.length : firstSection)
+  const rootLines = splitTomlDocument(content).root
     .map(line => line.trim()).filter(Boolean);
   const providerId = profile.providerId;
   const providerLines = tomlSectionLines(content, `model_providers.${providerId}`);
   const authLines = tomlSectionLines(content, `model_providers.${providerId}.auth`);
   const auth = authCommandForToken(tokenPath, platform);
+  let baseUrl;
+  try {
+    baseUrl = validateProviderBaseUrl(profile.baseUrl).normalized;
+    assertNoSensitiveStaticValues(profile.queryParams, 'Query parameters');
+    assertNoSensitiveStaticValues(profile.httpHeaders, 'Static headers');
+  } catch { return false; }
   return hasSingleTomlLine(rootLines, `model_provider = "${tomlString(providerId)}"`, 'model_provider')
-    && hasSingleTomlLine(providerLines, `base_url = "${tomlString(normalizeBaseUrl(profile.baseUrl))}"`, 'base_url')
+    && hasSingleTomlLine(providerLines, `base_url = "${tomlString(baseUrl)}"`, 'base_url')
     && hasSingleTomlLine(providerLines, 'wire_api = "responses"', 'wire_api')
     && hasSingleTomlLine(authLines, `command = "${tomlString(auth.command)}"`, 'command')
     && hasSingleTomlLine(authLines, `args = ${tomlArray(auth.args)}`, 'args');
@@ -1017,17 +1653,27 @@ async function reconcileManagedCodexState(context, files = pathsForCurrentUser()
   const originalState = await readOriginalState(files);
   if (!originalState) return undefined;
   const currentHash = contentHash(content);
-  if (originalState.lastAppliedHash && originalState.lastAppliedHash !== currentHash) return undefined;
-
   const active = getActiveTargets(context).codex;
+  const managedMatch = await managedCodexConfigMatches(context, files, content, originalState, active);
+  if (originalState.lastAppliedHash
+    && originalState.lastAppliedHash !== currentHash
+    && !managedMatch) return undefined;
   const resolved = resolveManagedCodexProfile(context, content, originalState, active);
   if (!resolved) return undefined;
   const { profile, model } = resolved;
 
   const legacyState = !originalState.lastAppliedHash;
-  if (legacyState || originalState.profileId !== profile.id || originalState.model !== model) {
+  const projectedHash = managedCodexConfigHash(content, { maskSecrets: false });
+  if (legacyState
+    || !originalState.managedConfigHash
+    || originalState.profileId !== profile.id
+    || originalState.model !== model) {
     await writeOriginalState(files, originalState.existed, {
-      lastAppliedHash: currentHash,
+      // Keep the old full-file hash when Codex has appended its own settings.
+      // Automatic refresh must not mistake an additive external change for a
+      // clean snapshot and then erase those settings.
+      lastAppliedHash: originalState.lastAppliedHash || currentHash,
+      managedConfigHash: projectedHash,
       profileId: profile.id,
       model,
       automaticRefreshDisabled: legacyState ? true : originalState.automaticRefreshDisabled,
@@ -1044,28 +1690,43 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
   const normalizedTarget = normalizeTargetId(targetId);
   const active = getActiveTargets(context)[normalizedTarget];
   const originalState = await readOriginalState(files);
-  const configExists = await fileExists(files.config);
-  const backupExists = await fileExists(files.backup);
+  const configSnapshot = await readRegularFileSnapshot(files.config);
+  const backupSnapshot = await readRegularFileSnapshot(files.backup);
+  const configExists = configSnapshot.exists;
+  const backupExists = backupSnapshot.exists;
   const markerManaged = normalizedTarget === 'codex' && configExists
-    ? await isManagedConfig(files.config)
+    ? Boolean(parseManagedCodexMetadata(configSnapshot.content))
     : false;
   const hasManagedRecord = Boolean(originalState && originalState.lastAppliedHash);
 
   let status = 'original';
   let currentHash;
+  let currentContent = '';
   if (configExists) {
-    currentHash = contentHash(await fs.promises.readFile(files.config, 'utf8'));
+    currentContent = configSnapshot.content;
+    currentHash = configSnapshot.currentHash;
   }
-  if ((active || markerManaged || hasManagedRecord) && (!active || !originalState || !hasManagedRecord || !configExists)) {
-    status = 'managed-orphaned';
-  } else if (hasManagedRecord && currentHash !== originalState.lastAppliedHash) {
-    status = 'managed-drifted';
-  } else if (hasManagedRecord && originalState.existed && !backupExists) {
+  let managedMatch = false;
+  const currentManagedConfigHash = normalizedTarget === 'codex' && configExists
+    ? managedCodexConfigHash(currentContent, { maskSecrets: false })
+    : undefined;
+  if (normalizedTarget === 'codex' && configExists && originalState && hasManagedRecord) {
+    managedMatch = await managedCodexConfigMatches(context, files, currentContent, originalState, active);
+  }
+  if (hasManagedRecord && originalState.existed && !backupExists) {
     status = 'backup-missing';
+  } else if ((active || markerManaged || hasManagedRecord) && (!active || !originalState || !hasManagedRecord || !configExists)) {
+    status = 'managed-orphaned';
+  } else if (normalizedTarget === 'codex' && (markerManaged || hasManagedRecord) && !currentManagedConfigHash) {
+    status = 'managed-drifted';
+  } else if (hasManagedRecord && currentHash !== originalState.lastAppliedHash && !managedMatch) {
+    status = 'managed-drifted';
   } else if (active && hasManagedRecord) {
     status = 'managed-clean';
   }
 
+  const hasUnmanagedChanges = Boolean(normalizedTarget === 'codex' && hasManagedRecord
+    && currentHash !== originalState.lastAppliedHash && managedMatch);
   return {
     status,
     active,
@@ -1073,8 +1734,11 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
     configExists,
     backupExists,
     currentHash,
+    managedMatch,
+    managedConfigHash: currentManagedConfigHash,
+    hasUnmanagedChanges,
     managed: status !== 'original',
-    canRestore: Boolean(originalState && (!originalState.existed || backupExists)),
+    canRestore: Boolean(status !== 'original' && originalState && (!originalState.existed || backupExists)),
     // A drifted file may be deliberately replaced, but only after the
     // activation path obtains explicit confirmation. Automatic refresh stays
     // disabled because it uses the stricter managed-clean status.
@@ -1086,7 +1750,8 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
 async function assertManagedContentUnchanged(context, targetId, files, allowConfirmation = false) {
   const management = await getTargetManagementState(context, targetId, files);
   const uncertain = management.status === 'managed-drifted'
-    || (management.status === 'managed-orphaned' && management.configExists);
+    || (management.status === 'managed-orphaned' && management.configExists)
+    || management.hasUnmanagedChanges;
   if (!uncertain) return management;
   if (!allowConfirmation) {
     throw new Error(`${targetLabel(targetId)} 配置在 ModelMux 写入后已被其它程序修改，或缺少可验证的托管记录。请先预览或恢复，避免覆盖外部改动。`);
@@ -1105,6 +1770,9 @@ async function assertManagedContentUnchanged(context, targetId, files, allowConf
 
 async function assertTargetCanApply(context, targetId, files, allowDriftConfirmation = false) {
   const management = await getTargetManagementState(context, targetId, files);
+  if (management.originalState && management.originalState.existed && !management.backupExists) {
+    throw new Error(`${targetLabel(targetId)} 的原始备份缺失。为避免不可逆覆盖，ModelMux 已停止写入。`);
+  }
   if (management.status === 'managed-drifted') {
     if (!allowDriftConfirmation) {
       throw new Error(`${targetLabel(targetId)} 配置在 ModelMux 写入后已被其它程序修改。重新应用前需要明确确认，以免覆盖外部改动。`);
@@ -1129,22 +1797,23 @@ async function assertTargetCanApply(context, targetId, files, allowDriftConfirma
 }
 
 async function assertTargetSnapshotUnchanged(management, files) {
-  const existsNow = await fileExists(files.config);
-  if (existsNow !== management.configExists) {
-    throw new Error(`${files.config} 在确认应用后又发生了变化。为避免覆盖新的外部改动，本次应用已停止，请重试。`);
-  }
-  if (!existsNow) return;
-  const currentHash = contentHash(await fs.promises.readFile(files.config, 'utf8'));
-  if (currentHash !== management.currentHash) {
-    throw new Error(`${files.config} 在确认应用后又发生了变化。为避免覆盖新的外部改动，本次应用已停止，请重试。`);
-  }
+  return assertFileSnapshotUnchanged(files.config, management);
+}
+
+async function assertFileSnapshotUnchanged(file, snapshot) {
+  const current = await readRegularFileSnapshot(file);
+  assertSnapshotMatches(file, current, snapshot);
 }
 
 async function originalContentForTarget(files) {
   const state = await readOriginalState(files);
   if (!state || state.existed === false) return '';
-  if (!(await fileExists(files.backup))) throw new Error(`找不到 ${targetLabel(files.targetId)} 原始备份：${files.backup}`);
-  return fs.promises.readFile(files.backup, 'utf8');
+  const backupSnapshot = await readRegularFileSnapshot(files.backup);
+  if (!backupSnapshot.exists) throw new Error(`找不到 ${targetLabel(files.targetId)} 原始备份：${files.backup}`);
+  if (state.originalHash && backupSnapshot.currentHash !== state.originalHash) {
+    throw new Error(`${targetLabel(files.targetId)} 原始备份完整性校验失败：${files.backup}`);
+  }
+  return backupSnapshot.content;
 }
 
 function parseJsonObject(content, label, allowJson5 = false) {
@@ -1205,23 +1874,29 @@ function buildGeminiConfig(model, original) {
 }
 
 function buildGrokConfig(model, original) {
-  const lines = String(original || '').replace(/^\uFEFF/, '').split(/\r?\n/);
-  let sectionStart = lines.findIndex(line => /^\s*\[models\]\s*(?:#.*)?$/.test(line));
+  const source = String(original || '').replace(/^\uFEFF/, '');
+  if (source.trim()) {
+    try { TOML.parse(source); }
+    catch (error) { throw new Error(`Grok config.toml 不是有效 TOML：${error.message || error}`); }
+  }
+  const lines = source.split(/\r?\n/);
+  const document = splitTomlDocument(source);
+  const modelsSection = document.sections.find(section => /^\[\s*models\s*\]\s*(?:#.*)?$/.test(section.header));
+  let sectionStart = modelsSection ? modelsSection.start : -1;
   if (sectionStart < 0) {
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
     if (lines.length) lines.push('');
     lines.push('[models]', `default = "${tomlString(model)}"`);
   } else {
-    let sectionEnd = lines.length;
-    for (let index = sectionStart + 1; index < lines.length; index += 1) {
-      if (/^\s*\[/.test(lines[index])) { sectionEnd = index; break; }
-    }
-    const defaultIndex = lines.slice(sectionStart + 1, sectionEnd)
-      .findIndex(line => /^\s*default\s*=/.test(line));
-    if (defaultIndex >= 0) lines[sectionStart + 1 + defaultIndex] = `default = "${tomlString(model)}"`;
+    const sectionIndex = document.sections.indexOf(modelsSection);
+    const nextSection = document.sections[sectionIndex + 1];
+    const sectionEnd = nextSection ? nextSection.start : lines.length;
+    const defaultIndex = document.controlIndexes.find(index => index > sectionStart && index < sectionEnd
+      && /^\s*default\s*=/.test(lines[index]));
+    if (defaultIndex !== undefined) lines[defaultIndex] = `default = "${tomlString(model)}"`;
     else lines.splice(sectionStart + 1, 0, `default = "${tomlString(model)}"`);
   }
-  if (!lines.some(line => line.includes(UNIVERSAL_MANAGED_MARKER))) lines.unshift(UNIVERSAL_MANAGED_MARKER);
+  if (!hasTomlControlLine(source, UNIVERSAL_MANAGED_MARKER)) lines.unshift(UNIVERSAL_MANAGED_MARKER);
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
 
@@ -1250,17 +1925,19 @@ function buildOpenCodeConfig(profile, model, original) {
 
 function buildOpenClawConfig(profile, model, original) {
   const config = parseJsonObject(original, 'OpenClaw openclaw.json', true);
-  config.agents = config.agents && typeof config.agents === 'object' ? config.agents : {};
-  config.agents.defaults = config.agents.defaults && typeof config.agents.defaults === 'object' ? config.agents.defaults : {};
+  config.agents = config.agents && typeof config.agents === 'object' && !Array.isArray(config.agents) ? config.agents : {};
+  config.agents.defaults = config.agents.defaults && typeof config.agents.defaults === 'object' && !Array.isArray(config.agents.defaults) ? config.agents.defaults : {};
   config.agents.defaults.model = config.agents.defaults.model && typeof config.agents.defaults.model === 'object'
+    && !Array.isArray(config.agents.defaults.model)
     ? config.agents.defaults.model : {};
   let providerId = nativeProviderId('openclaw', profile.kind);
   if (isCustomProfile(profile)) {
     providerId = profile.providerId;
     const envKey = environmentApiKey(profile);
-    config.models = config.models && typeof config.models === 'object' ? config.models : {};
+    config.models = config.models && typeof config.models === 'object' && !Array.isArray(config.models) ? config.models : {};
     config.models.mode = 'merge';
-    config.models.providers = config.models.providers && typeof config.models.providers === 'object' ? config.models.providers : {};
+    config.models.providers = config.models.providers && typeof config.models.providers === 'object'
+      && !Array.isArray(config.models.providers) ? config.models.providers : {};
     const provider = {
       baseUrl: normalizeBaseUrl(profile.baseUrl),
       api: profile.kind === 'customResponses' ? 'openai-responses'
@@ -1314,44 +1991,141 @@ async function activateExternalTarget(context, targetId, profile, model) {
   const files = pathsForTarget(targetId);
   const management = await assertTargetCanApply(context, targetId, files, true);
   if (!management) return false;
-  await ensureOriginalBackup(files);
-  await assertTargetSnapshotUnchanged(management, files);
-  const original = await originalContentForTarget(files);
-  const content = buildTargetConfig(targetId, profile, model, original);
-  await writeAtomic(files.config, content);
-  const state = await readOriginalState(files);
-  await writeOriginalState(files, state ? state.existed : false, {
-    lastAppliedHash: contentHash(content),
-    profileId: profile.id,
-    model,
-    updatedAt: new Date().toISOString()
-  });
-  await updateActiveTarget(context, targetId, { profileId: profile.id, model });
-  return { profile, model, files, backupText: state && state.existed ? `原配置已备份到 ${files.backup}。` : '原先没有配置文件，已记录空白原始状态。' };
+  const configSnapshot = await readRegularFileSnapshot(files.config);
+  assertSnapshotMatches(files.config, configSnapshot, management);
+  const backupSnapshot = await readRegularFileSnapshot(files.backup);
+  const stateSnapshot = await readRegularFileSnapshot(files.originalState);
+  const previousActive = getActiveTargets(context)[targetId];
+  let createdBackup = false;
+  let configWritten = false;
+  let takeoverStarted = false;
+  let activeUpdateStarted = false;
+  let writtenContent;
+  try {
+    takeoverStarted = true;
+    createdBackup = await ensureOriginalBackup(files, configSnapshot);
+    await assertTargetSnapshotUnchanged(management, files);
+    const original = await originalContentForTarget(files);
+    const content = buildTargetConfig(targetId, profile, model, original);
+    writtenContent = content;
+    await writeAtomic(files.config, content, management);
+    configWritten = true;
+    const state = await readOriginalState(files);
+    await writeOriginalState(files, state ? state.existed : false, {
+      lastAppliedHash: contentHash(content),
+      profileId: profile.id,
+      model,
+      updatedAt: new Date().toISOString()
+    });
+    activeUpdateStarted = true;
+    await updateActiveTarget(context, targetId, { profileId: profile.id, model });
+    return { profile, model, files, backupText: state && state.existed ? `原配置已备份到 ${files.backup}。` : '原先没有配置文件，已记录空白原始状态。' };
+  } catch (error) {
+    const rollbackErrors = [];
+    let configRollbackComplete = !configWritten;
+    if (configWritten) {
+      try {
+        await restoreFileSnapshot(files.config, configSnapshot, {
+          configExists: true,
+          currentHash: contentHash(writtenContent)
+        });
+        configRollbackComplete = true;
+      } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (activeUpdateStarted) {
+      try { await updateActiveTarget(context, targetId, previousActive); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (takeoverStarted && configRollbackComplete) {
+      try { await restoreFileSnapshot(files.originalState, stateSnapshot); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      try { await restoreFileSnapshot(files.backup, backupSnapshot); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (rollbackErrors.length) {
+      throw new Error(`${error.message || error}；回滚未完成：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 async function restoreExternalTarget(context, targetId) {
   const files = pathsForTarget(targetId);
   const management = await assertManagedContentUnchanged(context, targetId, files, true);
   if (!management) return false;
+  if (management.status === 'original') throw new Error(`${targetLabel(targetId)} 当前未由 ModelMux 管理，不能再次恢复旧备份。`);
   const state = management.originalState;
   if (!state) throw new Error(`尚未记录 ${targetLabel(targetId)} 的原始配置。`);
-  if (state.existed === false) await fs.promises.rm(files.config, { force: true });
-  else {
-    if (!(await fileExists(files.backup))) throw new Error(`找不到备份文件：${files.backup}`);
-    await writeAtomic(files.config, await fs.promises.readFile(files.backup, 'utf8'));
+  const configSnapshot = await readRegularFileSnapshot(files.config);
+  assertSnapshotMatches(files.config, configSnapshot, management);
+  const stateSnapshot = await readRegularFileSnapshot(files.originalState);
+  const previousActive = getActiveTargets(context)[targetId];
+  let restoredContent = '';
+  let configRestored = false;
+  let activeUpdateStarted = false;
+  try {
+  await assertTargetSnapshotUnchanged(management, files);
+  if (state.existed === false) {
+    await removeFileAtomicallyIfUnchanged(files.config, management);
   }
+  else {
+    const original = await originalContentForTarget(files);
+    restoredContent = original;
+    await writeAtomic(files.config, original, management);
+  }
+  configRestored = true;
   await writeOriginalState(files, state.existed, { lastAppliedHash: undefined, profileId: undefined, model: undefined, restoredAt: new Date().toISOString() });
+  activeUpdateStarted = true;
   await updateActiveTarget(context, targetId, undefined);
   return { files, originallyExisted: state.existed };
+  } catch (error) {
+    const rollbackErrors = [];
+    let configRollbackComplete = !configRestored;
+    if (configRestored) {
+      try {
+        await restoreFileSnapshot(files.config, configSnapshot, state.existed
+          ? { configExists: true, currentHash: contentHash(restoredContent) }
+          : { configExists: false });
+        configRollbackComplete = true;
+      } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (activeUpdateStarted) {
+      try { await updateActiveTarget(context, targetId, previousActive); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (configRollbackComplete) {
+      try { await restoreFileSnapshot(files.originalState, stateSnapshot); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (rollbackErrors.length) {
+      throw new Error(`${error.message || error}；恢复回滚未完成：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 async function writeRuntimeToken(tokenPath, apiKey) {
+  await ensurePrivateRuntimeDirectory(tokenPath);
   await writePrivateFile(tokenPath, apiKey.trim(), true);
 }
 
 async function removeRuntimeToken(tokenPath) {
-  await fs.promises.rm(tokenPath, { force: true }).catch(() => {});
+  await fs.promises.rm(tokenPath, { force: true });
+  try {
+    await fs.promises.lstat(tokenPath);
+    throw new Error(`运行时临时密钥仍然存在，删除失败：${tokenPath}`);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return true;
+    throw error;
+  }
+}
+
+async function removeRuntimeTokenBestEffort(tokenPath) {
+  try { return await removeRuntimeToken(tokenPath); }
+  catch (error) {
+    console.error(`Failed to remove runtime token ${tokenPath}:`, error);
+    return false;
+  }
 }
 
 async function offerReload(message) {
@@ -1381,11 +2155,22 @@ function tlsNameError(urlString, error) {
 
 function requestJson(urlString, headers, timeoutMs, options = {}) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const succeed = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     let parsed;
     try {
       parsed = new URL(urlString);
     } catch {
-      reject(new Error(uiText(`Invalid URL: ${urlString}`, `无效 URL：${urlString}`)));
+      fail(new Error(uiText(`Invalid URL: ${urlString}`, `无效 URL：${urlString}`)));
       return;
     }
 
@@ -1401,24 +2186,48 @@ function requestJson(urlString, headers, timeoutMs, options = {}) {
 
     const request = transport.request(parsed, requestOptions, response => {
       let body = '';
+      let bodyBytes = 0;
+      const declaredBytes = Number(response.headers['content-length']);
+      if (Number.isFinite(declaredBytes) && declaredBytes > MAX_MODEL_RESPONSE_BYTES) {
+        fail(new Error(uiText(
+          `The model discovery response exceeded ${MAX_MODEL_RESPONSE_BYTES / 1024 / 1024} MB.`,
+          `模型列表响应超过 ${MAX_MODEL_RESPONSE_BYTES / 1024 / 1024} MB 限制。`
+        )));
+        response.destroy();
+        return;
+      }
       response.setEncoding('utf8');
-      response.on('data', chunk => { body += chunk; });
+      response.on('data', chunk => {
+        if (settled) return;
+        bodyBytes += Buffer.byteLength(chunk, 'utf8');
+        if (bodyBytes > MAX_MODEL_RESPONSE_BYTES) {
+          fail(new Error(uiText(
+            `The model discovery response exceeded ${MAX_MODEL_RESPONSE_BYTES / 1024 / 1024} MB.`,
+            `模型列表响应超过 ${MAX_MODEL_RESPONSE_BYTES / 1024 / 1024} MB 限制。`
+          )));
+          response.destroy();
+          return;
+        }
+        body += chunk;
+      });
       response.on('end', () => {
+        if (settled) return;
         if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
-          reject(new Error(`HTTP ${response.statusCode}: ${body.slice(0, 500)}`));
+          fail(new Error(`HTTP ${response.statusCode}: ${body.slice(0, 500)}`));
           return;
         }
         try {
-          resolve(JSON.parse(body));
+          succeed(JSON.parse(body));
         } catch {
-          reject(new Error(uiText(`The service did not return valid JSON: ${body.slice(0, 300)}`, `服务返回的不是有效 JSON：${body.slice(0, 300)}`)));
+          fail(new Error(uiText(`The service did not return valid JSON: ${body.slice(0, 300)}`, `服务返回的不是有效 JSON：${body.slice(0, 300)}`)));
         }
       });
+      response.on('error', fail);
     });
 
     request.on('timeout', () => request.destroy(new Error(uiText(`Request timed out (${timeoutMs} ms).`, `请求超时（${timeoutMs} ms）`))));
     request.on('error', error => {
-      reject(isTlsNameError(error) ? tlsNameError(urlString, error) : error);
+      fail(isTlsNameError(error) ? tlsNameError(urlString, error) : error);
     });
     request.end();
   });
@@ -1491,6 +2300,28 @@ async function fetchModelsForProfile(context, profile, apiKeyOverride) {
   return models;
 }
 
+function profileRevisionFingerprint(profile) {
+  return contentHash(JSON.stringify(profile || {}));
+}
+
+async function profileCredentialFingerprint(context, profile) {
+  const authMode = profile && profile.authMode === 'bearer' ? 'secret' : profile && profile.authMode;
+  const material = {};
+  if (authMode === 'secret') {
+    material.secret = await context.secrets.get(profileSecretKey(context, profile.id)) || '';
+  } else if (authMode === 'env') {
+    material[profile.envKey || ''] = process.env[profile.envKey] || '';
+  } else if (authMode === 'envHeaders') {
+    for (const envName of Object.values(normalizeStringMap(profile.envHttpHeaders)).sort()) {
+      material[envName] = process.env[envName] || '';
+    }
+  }
+  return {
+    hash: contentHash(JSON.stringify(material)),
+    available: Object.values(material).some(Boolean)
+  };
+}
+
 async function promptRequired(options) {
   const customValidator = options.validateInput;
   return vscode.window.showInputBox({
@@ -1521,7 +2352,7 @@ async function chooseReasoningPolicy(current = 'auto') {
   return picked ? picked.value : undefined;
 }
 
-async function promptForApiKey(context, profile, allowKeepExisting = true) {
+async function promptForApiKey(context, profile, allowKeepExisting = true, options = {}) {
   const existing = await context.secrets.get(profileSecretKey(context, profile.id));
   const value = await vscode.window.showInputBox({
     title: `${profile.name}：API Key`,
@@ -1539,11 +2370,11 @@ async function promptForApiKey(context, profile, allowKeepExisting = true) {
     await vscode.window.showErrorMessage('API Key 不能为空。');
     return undefined;
   }
-  await context.secrets.store(profileSecretKey(context, profile.id), trimmed);
+  if (options.store !== false) await context.secrets.store(profileSecretKey(context, profile.id), trimmed);
   return trimmed;
 }
 
-async function chooseInitialModel(context, profile, currentModel) {
+async function chooseInitialModel(context, profile, currentModel, apiKeyOverride) {
   const choice = await vscode.window.showQuickPick([
     { label: '$(cloud-download) 从 /models 自动获取', value: 'fetch' },
     { label: '$(edit) 手动输入模型 ID', value: 'manual' }
@@ -1559,7 +2390,7 @@ async function chooseInitialModel(context, profile, currentModel) {
         location: vscode.ProgressLocation.Notification,
         title: '正在获取模型列表…',
         cancellable: false
-      }, () => fetchModelsForProfile(context, profile));
+      }, () => fetchModelsForProfile(context, profile, apiKeyOverride));
       const selected = await vscode.window.showQuickPick(models.map(id => ({ label: id })), {
         title: `选择模型（共 ${models.length} 个）`,
         ignoreFocusOut: true,
@@ -1594,6 +2425,7 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
   const name = await promptRequired({ title: existing ? '编辑自定义 Provider' : `添加${kindLabel(profile.kind)} Provider`, prompt: '配置名称。', value: profile.name || kindLabel(profile.kind) });
   if (!name) return undefined;
   profile.name = name.trim();
+  if (/[\u0000-\u001F\u007F]/.test(profile.name)) throw new Error('配置名称不能包含控制字符或换行。');
   const providerId = await promptRequired({
     title: 'Provider ID', prompt: '仅允许字母、数字、下划线和连字符；不能使用保留 ID。',
     value: profile.providerId || providerIdFromName(profile.name),
@@ -1604,7 +2436,12 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
   profile.providerName = profile.name;
   const baseUrl = await promptRequired({ title: `${kindLabel(profile.kind)} Base URL`, prompt: '填写服务根地址，通常到 /v1，不包含具体请求路径。', value: profile.baseUrl || '' });
   if (!baseUrl) return undefined;
-  profile.baseUrl = normalizeBaseUrl(baseUrl);
+  const validatedBase = validateProviderBaseUrl(baseUrl);
+  profile.baseUrl = validatedBase.normalized;
+  const localHost = ['localhost', '127.0.0.1', '::1'].includes(validatedBase.url.hostname);
+  if (validatedBase.url.protocol === 'http:' && !localHost && !profile.allowInsecureHttp) {
+    throw new Error('远程 HTTP 会明文传输凭据；请改用 HTTPS 或图形化编辑器中的显式危险选项。');
+  }
 
   let authChoices = [
     { label: '$(symbol-variable) Bearer 环境变量', description: 'Codex 通过 env_key 读取，适合服务器、CI 与多平台', value: 'env' },
@@ -1617,15 +2454,15 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
   const authChoice = await vscode.window.showQuickPick(authChoices, { title: '认证方式', ignoreFocusOut: true });
   if (!authChoice) return undefined;
   profile.authMode = authChoice.value;
+  let pendingSecret;
   if (profile.authMode === 'secret') {
-    const key = await promptForApiKey(context, profile, Boolean(existing));
-    if (!key) return undefined;
+    pendingSecret = await promptForApiKey(context, profile, Boolean(existing), { store: false });
+    if (!pendingSecret) return undefined;
   } else if (profile.authMode === 'env') {
     const defaultEnvKey = profile.kind === 'customAnthropic' ? 'ANTHROPIC_API_KEY' : 'MODEL_SWITCH_API_KEY';
     const envKey = await promptRequired({ title: 'API Key 环境变量名', value: profile.envKey || defaultEnvKey, validateInput: value => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim()) ? undefined : '环境变量名格式无效。' });
     if (!envKey) return undefined;
     profile.envKey = envKey.trim();
-    await context.secrets.delete(profileSecretKey(context, profile.id));
   } else if (profile.authMode === 'envHeaders') {
     const mapping = await promptRequired({
       title: '环境变量请求头映射',
@@ -1635,18 +2472,16 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
     });
     if (!mapping) return undefined;
     profile.envHttpHeaders = parseJsonMap(mapping, '环境变量请求头映射');
-    await context.secrets.delete(profileSecretKey(context, profile.id));
-  } else {
-    await context.secrets.delete(profileSecretKey(context, profile.id));
   }
 
-  const modelResult = await chooseInitialModel(context, profile, profile.selectedModel);
+  const modelResult = await chooseInitialModel(context, profile, profile.selectedModel, pendingSecret);
   if (!modelResult) return undefined;
   profile.models = modelResult.models;
   profile.selectedModel = modelResult.selectedModel;
   const reasoningPolicy = await chooseReasoningPolicy(profile.reasoningPolicy || 'auto');
   if (!reasoningPolicy) return undefined;
   profile.reasoningPolicy = reasoningPolicy;
+  Object.defineProperty(profile, PENDING_PROFILE_SECRET, { value: pendingSecret, configurable: true });
   return profile;
 }
 
@@ -1788,7 +2623,10 @@ async function addProfile(context, statusBar) {
   else profile = await createLocalProfile(type.value);
   if (!profile) return;
   await withProfileMutation(profile.id, async () => {
-    await saveProfiles(context, [...getProfiles(context), profile]);
+    const previous = getProfiles(context);
+    const next = [...previous, profile];
+    if (isCustomProfile(profile)) await commitProfileAndSecret(context, previous, next, profile, profile[PENDING_PROFILE_SECRET]);
+    else await saveProfiles(context, next);
   });
   const activateNow = await vscode.window.showInformationMessage(`已保存配置“${profile.name}”。`, '立即启用', '稍后');
   if (activateNow === '立即启用') await activateProfileForTarget(context, getSelectedTargetId(context), profile.id, statusBar);
@@ -1846,7 +2684,10 @@ async function editProfile(context) {
     else if (['anthropic', 'gemini', 'grok'].includes(existing.kind)) updated = await createNativeProfile(existing.kind, existing);
     else updated = await createLocalProfile(existing.kind, existing);
     if (!updated) return;
-    await saveProfiles(context, getProfiles(context).map(item => item.id === updated.id ? updated : item));
+    const previous = getProfiles(context);
+    const next = previous.map(item => item.id === updated.id ? updated : item);
+    if (isCustomProfile(updated)) await commitProfileAndSecret(context, previous, next, updated, updated[PENDING_PROFILE_SECRET]);
+    else await saveProfiles(context, next);
     await vscode.window.showInformationMessage(`已更新配置“${updated.name}”。`);
   });
 }
@@ -1887,8 +2728,21 @@ async function deleteStoredProfile(context, profile, statusBar) {
       await updateActiveTarget(context, targetId, undefined);
     }
   }
-  await saveProfiles(context, getProfiles(context).filter(item => item.id !== profile.id));
-  await context.secrets.delete(profileSecretKey(context, profile.id));
+  const previousProfiles = getProfiles(context);
+  const secretKey = profileSecretKey(context, profile.id);
+  const previousSecret = await context.secrets.get(secretKey);
+  await context.secrets.delete(secretKey);
+  try {
+    await saveProfiles(context, previousProfiles.filter(item => item.id !== profile.id));
+  } catch (error) {
+    if (previousSecret !== undefined) {
+      try { await context.secrets.store(secretKey, previousSecret); }
+      catch (rollbackError) {
+        throw new Error(`${error.message || error}；API Key 回滚失败：${rollbackError.message || rollbackError}`, { cause: error });
+      }
+    }
+    throw error;
+  }
   await updateStatusBar(context, statusBar);
   return { cancelled: false, restoredTargets };
 }
@@ -1906,6 +2760,8 @@ async function refreshModels(context) {
   const profile = await chooseProfile(context, '选择要刷新模型列表的 Provider', item => isCustomProfile(item));
   if (!profile) return;
 
+  const profileFingerprint = profileRevisionFingerprint(profile);
+  const credentialBefore = await profileCredentialFingerprint(context, profile);
   try {
     const models = await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
@@ -1913,10 +2769,22 @@ async function refreshModels(context) {
       cancellable: false
     }, () => fetchModelsForProfile(context, profile));
 
+    const credentialAfterFetch = await profileCredentialFingerprint(context, profile);
+    if (credentialBefore.available && credentialBefore.hash !== credentialAfterFetch.hash) {
+      throw new Error(uiText('The provider credentials changed while models were loading. Refresh again.', '获取模型期间 Provider 凭据已变化，请重新刷新。'));
+    }
+
     await withProfileMutation(profile.id, async () => {
       const current = getProfiles(context);
       const latest = current.find(item => item.id === profile.id);
       if (!latest) throw new Error('Provider 已被删除。');
+      if (profileRevisionFingerprint(latest) !== profileFingerprint
+        || (await profileCredentialFingerprint(context, latest)).hash !== credentialAfterFetch.hash) {
+        throw new Error(uiText(
+          'The provider or its credentials changed while models were loading. Refresh again to avoid applying a stale model list.',
+          '获取模型期间 Provider 或凭据已变化。请重新刷新，避免写入过期模型列表。'
+        ));
+      }
       latest.models = models;
       if (!models.includes(latest.selectedModel)) latest.selectedModel = models[0];
       await saveProfiles(context, current.map(item => item.id === latest.id ? latest : item));
@@ -1991,11 +2859,23 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
   const model = modelOverride || await chooseModelForProfile(context, profile);
   if (!model) return false;
 
-  const files = pathsForCurrentUser();
+  const files = options.files || pathsForCurrentUser();
+  let createdBackup = false;
+  let configWritten = false;
+  let profileUpdateStarted = false;
+  let tokenMutationStarted = false;
+  let takeoverStarted = false;
+  let activeUpdateStarted = false;
+  let configSnapshot;
+  let backupSnapshot;
+  let stateSnapshot;
+  let tokenSnapshot;
+  let previousActive;
+  let managedContent;
+  let result;
   try {
     const management = await assertTargetCanApply(context, 'codex', files, true);
     if (!management) return false;
-    const createdBackup = await ensureOriginalBackup(files);
 
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     let resolvedSecret;
@@ -2005,9 +2885,26 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
       if (!resolvedSecret) return false;
     }
 
-    // Recheck after any confirmation or credential prompt, before changing the
-    // runtime credential or the managed file.
+    // Capture the original only after all cancellable prompts have completed.
+    configSnapshot = await readRegularFileSnapshot(files.config);
+    assertSnapshotMatches(files.config, configSnapshot, management);
+    backupSnapshot = await readRegularFileSnapshot(files.backup);
+    stateSnapshot = await readRegularFileSnapshot(files.originalState);
+    tokenSnapshot = await readRegularFileSnapshot(files.token);
+    previousActive = getActiveTargets(context).codex;
+    takeoverStarted = true;
+    createdBackup = await ensureOriginalBackup(files, configSnapshot);
     await assertTargetSnapshotUnchanged(management, files);
+
+    const updatedProfile = { ...profile, selectedModel: model };
+    const desiredContent = buildManagedConfig(updatedProfile, model, files.token, resolvedSecret);
+    managedContent = management.configExists
+      ? mergeManagedCodexConfig(desiredContent, await fs.promises.readFile(files.config, 'utf8'))
+      : desiredContent;
+
+    profileUpdateStarted = true;
+    await saveProfiles(context, profiles.map(item => item.id === updatedProfile.id ? updatedProfile : item));
+    tokenMutationStarted = true;
     if (profile.kind === 'customResponses' && authMode === 'secret' && process.platform !== 'win32') {
       await writeRuntimeToken(files.token, resolvedSecret);
     } else {
@@ -2016,36 +2913,72 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
       await removeRuntimeToken(files.token);
     }
 
-    profile.selectedModel = model;
-    await saveProfiles(context, profiles.map(item => item.id === profile.id ? profile : item));
-    const managedContent = buildManagedConfig(profile, model, files.token, resolvedSecret);
-    await writeAtomic(files.config, managedContent);
+    await writeAtomic(files.config, managedContent, management);
+    configWritten = true;
     const originalState = await readOriginalState(files);
     await writeOriginalState(files, originalState ? originalState.existed : false, {
       lastAppliedHash: contentHash(managedContent),
-      profileId: profile.id,
+      managedConfigHash: managedCodexConfigHash(managedContent, { maskSecrets: false }),
+      profileId: updatedProfile.id,
       model,
       automaticRefreshDisabled: undefined,
       updatedAt: new Date().toISOString()
     });
-    await updateActiveTarget(context, 'codex', { profileId: profile.id, model });
-    await updateStatusBar(context, statusBar, files);
+    activeUpdateStarted = true;
+    await updateActiveTarget(context, 'codex', { profileId: updatedProfile.id, model });
 
     const backupText = createdBackup
       ? originalState && originalState.existed ? `原配置已备份到 ${files.backup}。` : '原先没有 config.toml，已记录空白原始状态。'
       : '已有原始状态记录，未重复覆盖。';
-    const result = { profile, model, backupText, files };
-    if (options.offerReload !== false) {
-      await offerReload(`已启用“${profile.name} / ${model}”。${backupText}`);
-    }
-    return result;
+    result = { profile: updatedProfile, model, backupText, files };
   } catch (error) {
+    const rollbackErrors = [];
+    let configRollbackComplete = !configWritten;
+    if (configWritten && configSnapshot) {
+      try {
+        await restoreFileSnapshot(files.config, configSnapshot, {
+          configExists: true,
+          currentHash: contentHash(managedContent)
+        });
+        configRollbackComplete = true;
+      } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (activeUpdateStarted) {
+      try { await updateActiveTarget(context, 'codex', previousActive); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (tokenMutationStarted && tokenSnapshot) {
+      try {
+        if (tokenSnapshot.exists) await writeRuntimeToken(files.token, tokenSnapshot.content);
+        else await removeRuntimeToken(files.token);
+      } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (profileUpdateStarted) {
+      try { await saveProfiles(context, profiles); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (takeoverStarted && configRollbackComplete) {
+      try { await restoreFileSnapshot(files.originalState, stateSnapshot); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      try { await restoreFileSnapshot(files.backup, backupSnapshot); }
+      catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (rollbackErrors.length) {
+      error = new Error(`${error.message || error}；回滚未完成：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+    }
     if (options.showError !== false) {
       await vscode.window.showErrorMessage(`启用失败：${error.message || error}`);
     }
     if (options.throwOnError) throw error;
     return false;
   }
+
+  try { await updateStatusBar(context, statusBar, files); }
+  catch (error) { console.error('Failed to refresh ModelMux status bar after activation:', error); }
+  if (options.offerReload !== false) {
+    await offerReload(`已启用“${result.profile.name} / ${model}”。${result.backupText}`);
+  }
+  return result;
 }
 
 async function switchProfile(context, statusBar) {
@@ -2062,29 +2995,81 @@ async function switchProfile(context, statusBar) {
 
 async function restoreOriginal(context, statusBar, options = {}) {
   if (!(await ensureSupportedPlatform())) return false;
-  const files = pathsForCurrentUser();
+  const files = options.files || pathsForCurrentUser();
+  let result;
   try {
     const management = await assertManagedContentUnchanged(context, 'codex', files, true);
     if (!management) return false;
+    if (management.status === 'original') throw new Error('Codex 当前未由 ModelMux 管理，不能再次恢复旧备份。');
     const state = management.originalState;
     if (!state) throw new Error('尚未记录 Codex 的原始配置。');
-    if (state.existed === false) {
-      await fs.promises.rm(files.config, { force: true });
-    } else {
-      if (!(await fileExists(files.backup))) throw new Error(`找不到备份文件：${files.backup}`);
-      await writeAtomic(files.config, await fs.promises.readFile(files.backup, 'utf8'));
+    const configSnapshot = await readRegularFileSnapshot(files.config);
+    assertSnapshotMatches(files.config, configSnapshot, management);
+    const stateSnapshot = await readRegularFileSnapshot(files.originalState);
+    const tokenSnapshot = await readRegularFileSnapshot(files.token);
+    const previousActive = getActiveTargets(context).codex;
+    const original = await originalContentForTarget({ ...files, targetId: 'codex' });
+    const managedProfile = getProfiles(context).find(item => item.id === state.profileId);
+    const managedProviderId = managedProfile ? providerIdForProfile(managedProfile) : undefined;
+    const restoredContent = buildRestoredCodexConfig(original, configSnapshot.content, managedProviderId);
+    let configRestored = false;
+    let tokenMutationStarted = false;
+    let activeUpdateStarted = false;
+    try {
+      if (restoredContent.trim()) await writeAtomic(files.config, restoredContent, management);
+      else await removeFileAtomicallyIfUnchanged(files.config, management);
+      configRestored = true;
+      tokenMutationStarted = true;
+      await removeRuntimeToken(files.token);
+      await writeOriginalState(files, state.existed, {
+        lastAppliedHash: undefined,
+        managedConfigHash: undefined,
+        profileId: undefined,
+        model: undefined,
+        restoredAt: new Date().toISOString()
+      });
+      activeUpdateStarted = true;
+      await updateActiveTarget(context, 'codex', undefined);
+      result = { files, originallyExisted: state.existed };
+    } catch (error) {
+      const rollbackErrors = [];
+      let configRollbackComplete = !configRestored;
+      if (configRestored) {
+        try {
+          await restoreFileSnapshot(files.config, configSnapshot, restoredContent.trim()
+            ? { configExists: true, currentHash: contentHash(restoredContent) }
+            : { configExists: false });
+          configRollbackComplete = true;
+        } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (activeUpdateStarted) {
+        try { await updateActiveTarget(context, 'codex', previousActive); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (tokenMutationStarted) {
+        try {
+          if (tokenSnapshot.exists) await writeRuntimeToken(files.token, tokenSnapshot.content);
+          else await removeRuntimeToken(files.token);
+        } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (configRollbackComplete) {
+        try { await restoreFileSnapshot(files.originalState, stateSnapshot); }
+        catch (rollbackError) { rollbackErrors.push(rollbackError); }
+      }
+      if (rollbackErrors.length) {
+        throw new Error(`${error.message || error}；恢复回滚未完成：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+      }
+      throw error;
     }
-    await removeRuntimeToken(files.token);
-    await writeOriginalState(files, state.existed, { lastAppliedHash: undefined, profileId: undefined, model: undefined, restoredAt: new Date().toISOString() });
-    await updateActiveTarget(context, 'codex', undefined);
-    await updateStatusBar(context, statusBar, files);
-    if (options.offerReload !== false) await offerReload('已恢复原始 Codex 状态，并删除运行时临时密钥。');
-    return { files, originallyExisted: state ? state.existed : true };
   } catch (error) {
     if (options.showError !== false) await vscode.window.showErrorMessage(`恢复失败：${error.message || error}`);
     if (options.throwOnError) throw error;
     return false;
   }
+  try { await updateStatusBar(context, statusBar, files); }
+  catch (error) { console.error('Failed to refresh ModelMux status bar after restore:', error); }
+  if (options.offerReload !== false) await offerReload('已恢复原始 Codex 状态，并删除运行时临时密钥。');
+  return result;
 }
 
 async function activateProfileForTargetUnlocked(context, targetId, profileId, statusBar, modelOverride, options = {}) {
@@ -2098,20 +3083,34 @@ async function activateProfileForTargetUnlocked(context, targetId, profileId, st
   const model = modelOverride || await chooseModelForProfile(context, profile);
   if (!model) return false;
   if (normalizedTarget === 'codex') return activateProfile(context, profile.id, statusBar, model, options);
+  const updatedProfile = { ...profile, selectedModel: model };
+  let profileSaved = false;
+  let result;
   try {
-    profile.selectedModel = model;
-    await saveProfiles(context, profiles.map(item => item.id === profile.id ? profile : item));
-    const result = await activateExternalTarget(context, normalizedTarget, profile, model);
-    await updateStatusBar(context, statusBar, result.files);
-    if (options.offerReload !== false) {
-      await vscode.window.showInformationMessage(`已为 ${targetLabel(normalizedTarget)} 启用“${profile.name} / ${model}”。新会话将使用该配置。`);
+    await saveProfiles(context, profiles.map(item => item.id === profile.id ? updatedProfile : item));
+    profileSaved = true;
+    result = await activateExternalTarget(context, normalizedTarget, updatedProfile, model);
+    if (!result) {
+      await saveProfiles(context, profiles);
+      return false;
     }
-    return result;
   } catch (error) {
+    if (profileSaved) {
+      try { await saveProfiles(context, profiles); }
+      catch (rollbackError) {
+        error = new Error(`${error.message || error}；Provider 模型选择回滚失败：${rollbackError.message || rollbackError}`, { cause: error });
+      }
+    }
     if (options.showError !== false) await vscode.window.showErrorMessage(`启用失败：${error.message || error}`);
     if (options.throwOnError) throw error;
     return false;
   }
+  try { await updateStatusBar(context, statusBar, result.files); }
+  catch (error) { console.error(`Failed to refresh ModelMux status bar after activating ${normalizedTarget}:`, error); }
+  if (options.offerReload !== false) {
+    await vscode.window.showInformationMessage(`已为 ${targetLabel(normalizedTarget)} 启用“${updatedProfile.name} / ${model}”。新会话将使用该配置。`);
+  }
+  return result;
 }
 
 async function activateProfileForTarget(context, targetId, profileId, statusBar, modelOverride, options = {}) {
@@ -2273,7 +3272,7 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   }
 
   if (!(await isManagedConfig(files.config))) {
-    await removeRuntimeToken(files.token);
+    await removeRuntimeTokenBestEffort(files.token);
     await updateStatusBar(context, statusBar, files);
     return;
   }
@@ -2288,11 +3287,24 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   const activeRecord = getActiveTargets(context).codex;
   const resolved = resolveManagedCodexProfile(context, content, originalState, activeRecord);
   if (!resolved) {
-    await removeRuntimeToken(files.token);
+    await removeRuntimeTokenBestEffort(files.token);
     await updateStatusBar(context, statusBar, files);
     return;
   }
   const { profile, model } = resolved;
+
+  if (isCustomProfile(profile)) {
+    try {
+      validateProviderBaseUrl(profile.baseUrl);
+      assertNoSensitiveStaticValues(profile.queryParams, 'Query parameters');
+      assertNoSensitiveStaticValues(profile.httpHeaders, 'Static headers');
+    } catch (error) {
+      console.error('Refusing to refresh an unsafe legacy provider:', error);
+      await removeRuntimeTokenBestEffort(files.token);
+      await updateStatusBar(context, statusBar, files);
+      return;
+    }
+  }
 
   const activeAuthMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
   let resolvedSecret;
@@ -2309,6 +3321,12 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   );
   const canRefreshConfig = canAutomaticallyRefreshManagedConfig(management) && contentStillMatchesState;
 
+  try { await assertTargetSnapshotUnchanged(management, files); }
+  catch {
+    await updateStatusBar(context, statusBar, files);
+    return;
+  }
+
   if (profile.kind === 'customResponses' && activeAuthMode === 'secret') {
     const canRestoreToken = canRefreshConfig || canRecreateRuntimeTokenFromManagedConfig(
       currentContent,
@@ -2323,10 +3341,10 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
         console.error('Failed to recreate Codex runtime token:', error);
       }
     } else {
-      await removeRuntimeToken(files.token);
+      await removeRuntimeTokenBestEffort(files.token);
     }
   } else {
-    await removeRuntimeToken(files.token);
+    await removeRuntimeTokenBestEffort(files.token);
   }
 
   if (!canRefreshConfig) {
@@ -2341,10 +3359,12 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
       await updateStatusBar(context, statusBar, files);
       return;
     }
-    if (current !== desired) {
-      await writeAtomic(files.config, desired);
+    const merged = mergeManagedCodexConfig(desired, current);
+    if (current !== merged) {
+      await writeAtomic(files.config, merged, management);
       await writeOriginalState(files, originalState.existed, {
-        lastAppliedHash: contentHash(desired),
+        lastAppliedHash: contentHash(merged),
+        managedConfigHash: managedCodexConfigHash(merged, { maskSecrets: false }),
         profileId: profile.id,
         model,
         updatedAt: new Date().toISOString()
@@ -2607,6 +3627,34 @@ function withoutSensitiveEntries(map) {
   return Object.fromEntries(Object.entries(normalizeStringMap(map)).filter(([key]) => !isSensitiveName(key)));
 }
 
+function sanitizedExportUrl(value) {
+  try {
+    const url = new URL(normalizeBaseUrl(value));
+    if (!['http:', 'https:'].includes(url.protocol)) return undefined;
+    url.username = '';
+    url.password = '';
+    url.hash = '';
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (isSensitiveName(key)) url.searchParams.delete(key);
+    }
+    return normalizeBaseUrl(url.toString());
+  } catch { return undefined; }
+}
+
+function sanitizedModelDiscoveryPath(value) {
+  const text = String(value || '').trim();
+  if (!text) return text;
+  if (/^https?:\/\//i.test(text)) return sanitizedExportUrl(text);
+  try {
+    const url = new URL(text.startsWith('/') ? text : `/${text}`, 'https://modelmux.invalid');
+    url.hash = '';
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (isSensitiveName(key)) url.searchParams.delete(key);
+    }
+    return `${url.pathname}${url.search}`;
+  } catch { return undefined; }
+}
+
 function exportableProfile(profile) {
   const copy = {};
   for (const field of EXPORTABLE_PROFILE_FIELDS) {
@@ -2614,6 +3662,16 @@ function exportableProfile(profile) {
   }
   if (copy.queryParams) copy.queryParams = withoutSensitiveEntries(copy.queryParams);
   if (copy.httpHeaders) copy.httpHeaders = withoutSensitiveEntries(copy.httpHeaders);
+  if (copy.baseUrl !== undefined) {
+    const baseUrl = sanitizedExportUrl(copy.baseUrl);
+    if (baseUrl) copy.baseUrl = baseUrl;
+    else delete copy.baseUrl;
+  }
+  if (copy.modelDiscoveryPath !== undefined) {
+    const discoveryPath = sanitizedModelDiscoveryPath(copy.modelDiscoveryPath);
+    if (discoveryPath) copy.modelDiscoveryPath = discoveryPath;
+    else delete copy.modelDiscoveryPath;
+  }
   return copy;
 }
 
@@ -2735,7 +3793,13 @@ async function testProviderConnection(context, profileId) {
   const profile = getProfiles(context).find(item => item.id === profileId);
   if (!profile) throw new Error(uiText('Provider not found.', '未找到 Provider。'));
   if (!isCustomProfile(profile)) {
-    return { status: 'completed', native: true, latencyMs: 0, models: (profile.models || []).length };
+    return {
+      status: 'unsupported', native: true, ok: false,
+      message: uiText(
+        'Direct connection testing is only available for custom HTTP providers. Native providers use credentials owned by their CLI.',
+        '仅自定义 HTTP Provider 支持直接连接测试；原生 Provider 使用对应 CLI 自己管理的凭据。'
+      )
+    };
   }
   const started = Date.now();
   const models = await fetchModelsForProfile(context, profile);
@@ -2758,7 +3822,9 @@ async function proposedTargetContent(context, targetId, profile, model) {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     const placeholder = profile.kind === 'customResponses' && authMode === 'secret' && process.platform === 'win32'
       ? redactedPreviewSecret() : undefined;
-    return buildManagedConfig(profile, model, files.token, placeholder);
+    const desired = buildManagedConfig(profile, model, files.token, placeholder);
+    const current = await readConfigText(files.config);
+    return current.trim() ? mergeManagedCodexConfig(desired, current) : desired;
   }
   const originalState = await readOriginalState(files);
   const original = originalState
@@ -2793,9 +3859,14 @@ async function previewRestoreConfig(context, targetId) {
   const normalizedTarget = normalizeTargetId(targetId);
   const files = pathsForTarget(normalizedTarget);
   const management = await getTargetManagementState(context, normalizedTarget, files);
-  if (!management.originalState) throw new Error(uiText('No original configuration has been recorded.', '尚未记录原始配置。'));
+  if (!management.originalState || management.status === 'original') throw new Error(uiText('No active managed configuration can be restored.', '当前没有可恢复的托管配置。'));
   const before = await readConfigText(files.config);
-  const after = await originalContentForTarget(files);
+  const original = await originalContentForTarget(files);
+  const managedProfile = normalizedTarget === 'codex'
+    ? getProfiles(context).find(item => item.id === management.originalState.profileId) : undefined;
+  const after = normalizedTarget === 'codex'
+    ? buildRestoredCodexConfig(original, before, managedProfile ? providerIdForProfile(managedProfile) : undefined)
+    : original;
   await showContentDiff(normalizedTarget, before, after, `ModelMux · ${targetLabel(normalizedTarget)} · ${uiText('Restore preview', '恢复预览')}`);
   return { status: 'completed' };
 }
@@ -2947,6 +4018,9 @@ function validateProviderId(value) {
   if (RESERVED_PROVIDER_IDS.has(trimmed)) {
     throw new Error(uiText(`Provider ID “${trimmed}” is reserved by Codex.`, `Provider ID “${trimmed}”是 Codex 保留名称。`));
   }
+  if (UNSAFE_OBJECT_KEYS.has(trimmed.toLowerCase())) {
+    throw new Error(uiText(`Provider ID “${trimmed}” is reserved by the configuration runtime.`, `Provider ID “${trimmed}”是配置运行时保留名称。`));
+  }
   return trimmed;
 }
 
@@ -2957,6 +4031,9 @@ function normalizeProfileFromGui(input, existing) {
   profile.kind = kind;
   profile.name = String(input && input.name || '').trim();
   if (!profile.name) throw new Error(uiText('Profile name is required.', '配置名称不能为空。'));
+  if (/[\u0000-\u001F\u007F]/.test(profile.name)) {
+    throw new Error(uiText('Profile name must not contain control characters or line breaks.', '配置名称不能包含控制字符或换行。'));
+  }
   const models = uniqueModels(input && input.models);
   const selectedModel = String(input && input.selectedModel || '').trim();
   if (!selectedModel) throw new Error(uiText('Model ID is required.', '模型 ID 不能为空。'));
@@ -2966,11 +4043,10 @@ function normalizeProfileFromGui(input, existing) {
   if (CUSTOM_KINDS.has(kind)) {
     profile.providerId = validateProviderId(input.providerId || providerIdFromName(profile.name));
     profile.providerName = String(input.providerName || profile.name).trim() || profile.name;
-    profile.baseUrl = normalizeBaseUrl(input.baseUrl);
-    if (!profile.baseUrl) throw new Error(uiText('Base URL is required.', 'Base URL 不能为空。'));
-    let url;
-    try { url = new URL(profile.baseUrl); } catch { throw new Error(uiText('Base URL must be a valid HTTP or HTTPS URL.', 'Base URL 必须是有效的 http 或 https 地址。')); }
-    if (!['http:', 'https:'].includes(url.protocol)) throw new Error(uiText('Base URL only supports HTTP or HTTPS.', 'Base URL 仅支持 http 或 https。'));
+    if (!normalizeBaseUrl(input.baseUrl)) throw new Error(uiText('Base URL is required.', 'Base URL 不能为空。'));
+    const validatedBase = validateProviderBaseUrl(input.baseUrl);
+    profile.baseUrl = validatedBase.normalized;
+    const { url } = validatedBase;
     const localHost = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
     profile.allowInsecureHttp = Boolean(input.allowInsecureHttp);
     if (url.protocol === 'http:' && !localHost && !profile.allowInsecureHttp) {
@@ -3026,8 +4102,8 @@ async function getDashboardState(context) {
   const activeId = activeRecord && activeRecord.profileId;
   const management = await getTargetManagementState(context, selectedTargetId, files);
   const managed = management.managed;
-  const items = [];
-  for (const profile of profiles) {
+  const targetMap = await managedTargetMap(context);
+  const items = await Promise.all(profiles.map(async profile => {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     const requiresSecret = isCustomProfile(profile) && authMode === 'secret';
     const hasSecret = requiresSecret ? Boolean(await context.secrets.get(profileSecretKey(context, profile.id))) : false;
@@ -3042,8 +4118,8 @@ async function getDashboardState(context) {
     const compatibility = targetCompatibility(selectedTargetId, profile);
     const active = management.status === 'managed-clean' && profile.id === activeId;
     const managedForSelectedTarget = Boolean(management.managed && profile.id === activeId);
-    const activeTargetId = await activeManagedTargetForProfile(context, profile.id);
-    items.push({
+    const activeTargetId = (targetMap.get(profile.id) || [])[0];
+    return {
       ...profile,
       selectedModel: active && activeRecord.model ? activeRecord.model : profile.selectedModel,
       authMode,
@@ -3062,24 +4138,23 @@ async function getDashboardState(context) {
       canDelete: true,
       canClearSecret: !activeTargetId && requiresSecret,
       canApply: compatibility.supported && management.canApply
-    });
-  }
+    };
+  }));
   const env = runtimeEnvironmentInfo();
   const originalState = await readOriginalState(files);
-  const targets = [];
-  for (const id of TARGET_IDS) {
+  const targets = await Promise.all(TARGET_IDS.map(async id => {
     const targetFiles = pathsForTarget(id);
     const targetActive = activeTargets[id];
     const targetManagement = await getTargetManagementState(context, id, targetFiles);
-    targets.push({
+    return {
       id,
       label: targetLabel(id),
       active: targetManagement.status === 'managed-clean',
       status: targetManagement.status,
       model: targetActive && targetActive.model,
       configExists: targetManagement.configExists
-    });
-  }
+    };
+  }));
   return {
     version: context.extension && context.extension.packageJSON && context.extension.packageJSON.version || EXTENSION_VERSION,
     ...env,
@@ -3233,17 +4308,10 @@ class DashboardViewProvider {
             }
             profile = normalizeProfileFromGui(input, existing);
             const apiKey = String(message.apiKey || '').trim();
-            if (isCustomProfile(profile) && profile.authMode === 'secret') {
-              const oldSecret = existing ? await this.context.secrets.get(profileSecretKey(this.context, profile.id)) : undefined;
-              if (!apiKey && !oldSecret) throw new Error(uiText('SecretStorage authentication requires an API key.', 'SecretStorage 认证需要填写 API Key。'));
-              if (apiKey) await this.context.secrets.store(profileSecretKey(this.context, profile.id), apiKey);
-            } else {
-              await this.context.secrets.delete(profileSecretKey(this.context, profile.id));
-            }
             const next = existing
               ? profiles.map(item => item.id === profile.id ? profile : item)
               : [...profiles, profile];
-            await saveProfiles(this.context, next);
+            await commitProfileAndSecret(this.context, profiles, next, profile, apiKey);
           });
           // 先返回保存结果，让 Webview 立即关闭编辑窗口。
           // showInformationMessage 返回 Promise；等待它会导致弹窗在用户关闭通知前一直保持打开。
@@ -3311,11 +4379,24 @@ class DashboardViewProvider {
           const profiles = getProfiles(this.context);
           const profile = profiles.find(item => item.id === message.profileId);
           if (!profile || !isCustomProfile(profile)) throw new Error(uiText('No refreshable custom provider was found.', '未找到可刷新的自定义 Provider。'));
+          const profileFingerprint = profileRevisionFingerprint(profile);
+          const credentialBefore = await profileCredentialFingerprint(this.context, profile);
           const models = await fetchModelsForProfile(this.context, profile);
+          const credentialAfterFetch = await profileCredentialFingerprint(this.context, profile);
+          if (credentialBefore.available && credentialBefore.hash !== credentialAfterFetch.hash) {
+            throw new Error(uiText('The provider credentials changed while models were loading. Refresh again.', '获取模型期间 Provider 凭据已变化，请重新刷新。'));
+          }
           await withProfileMutation(profile.id, async () => {
             const current = getProfiles(this.context);
             const latest = current.find(item => item.id === profile.id);
             if (!latest) throw new Error(uiText('Provider was deleted while models were loading.', '获取模型期间 Provider 已被删除。'));
+            if (profileRevisionFingerprint(latest) !== profileFingerprint
+              || (await profileCredentialFingerprint(this.context, latest)).hash !== credentialAfterFetch.hash) {
+              throw new Error(uiText(
+                'The provider or its credentials changed while models were loading. Refresh again.',
+                '获取模型期间 Provider 或凭据已变化，请重新刷新。'
+              ));
+            }
             latest.models = models;
             if (!models.includes(latest.selectedModel)) latest.selectedModel = models[0];
             await saveProfiles(this.context, current.map(item => item.id === latest.id ? latest : item));
@@ -3551,8 +4632,10 @@ async function activate(context) {
     vscode.commands.registerCommand('codexConfigSwitcher.clearApiKey', () => routeProfileCommand(context, 'clearApiKey', uiText('Choose an API key to clear', '选择要清除密钥的 Provider'), item => isCustomProfile(item) && ['secret', 'bearer'].includes(item.authMode)))
   );
 
-  recreateRuntimeTokenIfNeeded(context, statusBar).then(() => {
-    updateStatusBar(context, statusBar, pathsForTarget(getSelectedTargetId(context))).catch(console.error);
+  const startupCodexFiles = pathsForCurrentUser();
+  const startupStatusFiles = pathsForTarget(getSelectedTargetId(context));
+  recreateRuntimeTokenIfNeeded(context, statusBar, startupCodexFiles).then(() => {
+    updateStatusBar(context, statusBar, startupStatusFiles).catch(console.error);
     if (dashboardProvider) dashboardProvider.refresh().catch(console.error);
   }).catch(error => {
     console.error('Codex model profile manager startup error:', error);
@@ -3590,6 +4673,7 @@ module.exports = {
     saveProfiles,
     readOriginalState,
     ensureOriginalBackup,
+    originalContentForTarget,
     pathsForTarget,
     targetCompatibility,
     buildTargetConfig,
@@ -3598,6 +4682,11 @@ module.exports = {
     getActiveTargets,
     updateActiveTarget,
     contentHash,
+    managedCodexConfigProjection,
+    managedCodexConfigHash,
+    managedCodexConfigMatches,
+    mergeManagedCodexConfig,
+    buildRestoredCodexConfig,
     parseManagedCodexMetadata,
     reconcileManagedCodexState,
     canRecreateRuntimeTokenFromManagedConfig,
@@ -3611,6 +4700,12 @@ module.exports = {
     assertManagedContentUnchanged,
     assertTargetCanApply,
     assertTargetSnapshotUnchanged,
+    removeFileAtomicallyIfUnchanged,
+    activateProfile,
+    activateProfileForTargetUnlocked,
+    restoreOriginal,
+    requestJson,
+    commitProfileAndSecret,
     exportableProfile,
     createImportPlan,
     applyImportPlan,

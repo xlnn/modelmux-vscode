@@ -64,6 +64,21 @@ try {
   const discovery = api.modelDiscoveryUrl(envProfile);
   assert(discovery.includes('/models?'));
   assert(discovery.includes('api-version=2025-04-01-preview'));
+  const discoveryWithBaseQuery = new URL(api.modelDiscoveryUrl({
+    ...envProfile,
+    baseUrl: 'https://example.openai.azure.com/openai/v1?tenant=alpha',
+    modelDiscoveryPath: '/models?view=full'
+  }));
+  assert.strictEqual(discoveryWithBaseQuery.pathname, '/openai/v1/models');
+  assert.strictEqual(discoveryWithBaseQuery.searchParams.get('tenant'), 'alpha');
+  assert.strictEqual(discoveryWithBaseQuery.searchParams.get('view'), 'full');
+  assert.strictEqual(discoveryWithBaseQuery.searchParams.get('api-version'), '2025-04-01-preview');
+  const responsesEndpointProfile = api.normalizeProfileFromGui({
+    ...envProfile,
+    baseUrl: 'https://example.openai.azure.com/openai/v1/responses?api-version=2025-04-01-preview'
+  });
+  assert.strictEqual(responsesEndpointProfile.baseUrl,
+    'https://example.openai.azure.com/openai/v1?api-version=2025-04-01-preview');
   assert.throws(() => api.validatedModelDiscoveryUrl({
     ...envProfile,
     baseUrl: 'http://remote.example/v1',
@@ -73,6 +88,15 @@ try {
     ...envProfile,
     modelDiscoveryPath: 'https://other.example/models'
   }, true), /不同源/);
+  assert.throws(() => api.normalizeProfileFromGui({
+    ...envProfile,
+    providerId: '__proto__'
+  }), /保留|reserved/i);
+  assert.strictEqual(api.targetCompatibility('openclaw', {
+    ...envProfile,
+    kind: 'customChat',
+    providerId: '__proto__'
+  }).supported, false, 'unsafe legacy provider IDs must not reach JSON config builders');
 
   const headerAuth = api.normalizeProfileFromGui({
     kind: 'customResponses',

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+
+- Codex 配置改为结构化 TOML 合并与恢复；保留 Codex 自行写入的根设置、Desktop、MCP、Projects、Features 和其它 Provider，不再把这些追加内容误报为托管配置漂移。
+- 加强配置、备份、状态、运行时 Token 与活动 Provider 的事务回滚；原子写入、原子删除和首次备份会校验普通文件、快照与并发变化。
+- 修复多行 TOML 字符串中的表头或管理标记被误识别，以及 Grok `[models]`、OpenClaw 数组配置、危险 Provider ID 等适配问题。
+- 修复第三方 Base URL 带查询参数或 `/responses` 后缀时的模型发现路径，并加强非法 URL、凭据字段和响应大小校验。
+- 新增 Codex 外部设置保留、故障注入、恢复补偿、URL 边界、Grok/OpenClaw 异常结构及测试目录隔离回归。
+
 ## 1.3.2
 
 - Provider、CLI 选择、活动记录与 SecretStorage 密钥改为按实际 Extension Host 分区，本机、WSL、容器、Codespaces 与 Remote-SSH 不再共享配置。

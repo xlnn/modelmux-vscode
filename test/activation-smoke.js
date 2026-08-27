@@ -7,10 +7,14 @@ const path = require('path');
 const Module = require('module');
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-switcher-activation-'));
-process.env.HOME = path.join(sandbox, 'home');
-process.env.TMPDIR = path.join(sandbox, 'tmp');
-fs.mkdirSync(process.env.HOME, { recursive: true });
-fs.mkdirSync(process.env.TMPDIR, { recursive: true });
+const testHome = path.join(sandbox, 'home');
+const testTemp = path.join(sandbox, 'tmp');
+const originalHomedir = os.homedir;
+const originalTmpdir = os.tmpdir;
+os.homedir = () => testHome;
+os.tmpdir = () => testTemp;
+fs.mkdirSync(testHome, { recursive: true });
+fs.mkdirSync(testTemp, { recursive: true });
 delete process.env.CODEX_HOME;
 
 const registered = [];
@@ -45,7 +49,7 @@ const state = new Map();
 const context = {
   subscriptions: [],
   extensionUri: { fsPath: sandbox },
-  extension: { id: 'cherry-local.codex-config-switcher', packageJSON: { version: '1.3.2' } },
+  extension: { id: 'cherry-local.codex-config-switcher', packageJSON: { version: '1.4.0' } },
   globalState: {
     get(key, fallback) { return state.has(key) ? state.get(key) : fallback; },
     async update(key, value) { if (value === undefined) state.delete(key); else state.set(key, value); }
@@ -62,6 +66,8 @@ const context = {
   console.log('PASS: extension activation and command registration.');
 })().finally(() => {
   Module._load = originalLoad;
+  os.homedir = originalHomedir;
+  os.tmpdir = originalTmpdir;
   fs.rmSync(sandbox, { recursive: true, force: true });
 }).catch(error => {
   console.error(error.stack || error);

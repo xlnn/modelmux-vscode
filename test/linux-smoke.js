@@ -143,7 +143,7 @@ const api = extension.__test;
       async store(name, value) { secrets.set(name, value); },
       async delete(name) { secrets.delete(name); }
     },
-    extension: { packageJSON: { version: '1.3.2' }, id: 'cherry-local.codex-config-switcher' }
+    extension: { packageJSON: { version: '1.4.0' }, id: 'cherry-local.codex-config-switcher' }
   };
   values.set(api.environmentStateKey(context, 'modelProfilesV2'), [profile]);
   values.set(api.environmentStateKey(context, 'activeProfileIdV2'), profile.id);

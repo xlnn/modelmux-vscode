@@ -9,6 +9,8 @@ const JSON5 = require('json5');
 const YAML = require('yaml');
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-model-switcher-test-'));
+const originalHomedir = os.homedir;
+os.homedir = () => sandbox;
 process.env.GROK_HOME = path.join(sandbox, 'grok');
 process.env.OPENCLAW_CONFIG_PATH = path.join(sandbox, 'openclaw', 'openclaw.json');
 
@@ -71,6 +73,24 @@ try {
   const grokConfig = api.buildTargetConfig('grok', grok, 'grok-4', '# user comment\n[ui]\ncompact = true\n');
   assert(grokConfig.includes('# user comment'));
   assert(grokConfig.includes('[models]\ndefault = "grok-4"'));
+  const grokMultiline = api.buildTargetConfig('grok', grok, 'grok-4', [
+    'description = """',
+    '[models]',
+    'default = "text-only"',
+    '# Managed by CLI Model Switcher',
+    '"""',
+    '',
+    '[ui]',
+    'compact = true',
+    ''
+  ].join('\n'));
+  const parsedGrokMultiline = require('@iarna/toml').parse(grokMultiline);
+  assert.strictEqual(parsedGrokMultiline.description,
+    '[models]\ndefault = "text-only"\n# Managed by CLI Model Switcher\n');
+  assert.strictEqual(parsedGrokMultiline.models.default, 'grok-4',
+    'Grok must ignore table headers and management markers inside multiline strings');
+  assert.strictEqual((grokMultiline.match(/# Managed by CLI Model Switcher/g) || []).length, 2,
+    'a marker inside a string must not suppress the real top-level management marker');
 
   const openCodeText = api.buildTargetConfig('opencode', customChat, 'chat-model', '{\n  // keep me\n  "theme": "system"\n}\n');
   assert(openCodeText.includes('// keep me'));
@@ -95,6 +115,11 @@ try {
   assert.strictEqual(openClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
   assert.strictEqual(openClaw.models.providers.chat_gateway.api, 'openai-completions');
   assert.deepStrictEqual(openClaw.models.providers.chat_gateway.apiKey, { source: 'env', provider: 'default', id: 'MODEL_SWITCH_API_KEY' });
+  const repairedOpenClaw = JSON.parse(api.buildTargetConfig(
+    'openclaw', customChat, 'chat-model', '{"agents":[],"models":{"providers":[]}}'
+  ));
+  assert.strictEqual(repairedOpenClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
+  assert.strictEqual(repairedOpenClaw.models.providers.chat_gateway.api, 'openai-completions');
 
   const hermes = YAML.parse(api.buildTargetConfig('hermes', customAnthropic, 'claude-model', 'terminal:\n  theme: dark\n'));
   assert.strictEqual(hermes.model.provider, 'custom:claude_gateway');
@@ -110,12 +135,18 @@ try {
   assert.strictEqual(api.targetCompatibility('claude', customAnthropic).supported, true);
 
   const values = new Map();
+  let failActiveStateUpdates = false;
   const context = {
     globalState: {
       get(key, fallback) { return values.has(key) ? values.get(key) : fallback; },
-      async update(key, value) { if (value === undefined) values.delete(key); else values.set(key, value); }
+      async update(key, value) {
+        if (value === undefined) values.delete(key); else values.set(key, value);
+        if (failActiveStateUpdates && key.includes('activeCliTargetsV1')) {
+          throw new Error('simulated persistent active-state failure');
+        }
+      }
     },
-    secrets: { async delete() {} }
+    secrets: { async get() { return undefined; }, async store() {}, async delete() {} }
   };
   const profilesStateKey = api.environmentStateKey(context, 'modelProfilesV2');
   values.set(profilesStateKey, [grok, customChat, driftChat, missingConfigChat]);
@@ -177,6 +208,20 @@ try {
     assert(api.getActiveTargets(context).openclaw, 'restoring Grok must not affect OpenClaw');
     assert(fs.readFileSync(openClawFiles.config, 'utf8').includes('chat_gateway/chat-model'));
 
+    await api.activateExternalTarget(context, 'grok', grok, 'grok-4');
+    const managedGrokState = fs.readFileSync(grokFiles.originalState, 'utf8');
+    failActiveStateUpdates = true;
+    await assert.rejects(
+      api.restoreExternalTarget(context, 'grok'),
+      /simulated persistent active-state failure/
+    );
+    failActiveStateUpdates = false;
+    assert.strictEqual(fs.readFileSync(grokFiles.originalState, 'utf8'), managedGrokState,
+      'state-file rollback must still run when active-state rollback also fails');
+    assert(fs.readFileSync(grokFiles.config, 'utf8').includes('# Managed by CLI Model Switcher'),
+      'a failed restore must put the managed config back');
+    await api.restoreExternalTarget(context, 'grok');
+
     const deletion = await api.deleteStoredProfile(context, customChat, statusBar);
     assert.strictEqual(deletion.cancelled, false);
     assert.deepStrictEqual(deletion.restoredTargets, ['openclaw']);
@@ -220,6 +265,7 @@ try {
     console.log('PASS: Claude, Gemini, Grok, OpenCode, OpenClaw and Hermes adapters with isolated restore.');
   })().finally(() => {
     Module._load = originalLoad;
+    os.homedir = originalHomedir;
     fs.rmSync(sandbox, { recursive: true, force: true });
   }).catch(error => {
     console.error(error.stack || error);
@@ -227,6 +273,7 @@ try {
   });
 } catch (error) {
   Module._load = originalLoad;
+  os.homedir = originalHomedir;
   fs.rmSync(sandbox, { recursive: true, force: true });
   throw error;
 }
