@@ -2,7 +2,7 @@
   "name": "codex-config-switcher",
   "displayName": "ModelMux: AI CLI Model Manager",
   "description": "A secure visual model and provider manager for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "publisher": "cherry-local",
   "license": "MIT",
   "icon": "media/modelmux.png",
@@ -355,7 +355,7 @@
     "icon": "node scripts/generate-icon.js",
     "assets": "node -e \"const fs=require('node:fs'),path=require('node:path');const root=path.dirname(require.resolve('@vscode/codicons/package.json'));for(const file of ['codicon.css','codicon.ttf'])fs.copyFileSync(path.join(root,'dist',file),path.join('media',file))\"",
     "build": "npm run assets && esbuild extension.js --bundle --minify --legal-comments=none --platform=node --target=node20 --main-fields=module,main --external:vscode --outfile=dist/extension.js",
-    "test": "npm run build && node test/manifest-smoke.js && node test/security-smoke.js && node test/environment-storage-smoke.js && node test/webview-smoke.js && node test/linux-smoke.js && node test/config-smoke.js && node test/activation-smoke.js && node test/multi-cli-smoke.js && node test/bundle-smoke.js",
+      "test": "npm run build && node test/manifest-smoke.js && node test/security-smoke.js && node test/environment-storage-smoke.js && node test/webview-smoke.js && node test/linux-smoke.js && node test/config-smoke.js && node test/model-catalog-smoke.js && node test/activation-smoke.js && node test/multi-cli-smoke.js && node test/bundle-smoke.js",
     "vscode:prepublish": "npm run build",
     "package": "npm run icon && npm run build && node -e \"const cp=require('node:child_process');const out='modelmux-'+process.env.npm_package_version+'.vsix';const result=cp.spawnSync(process.execPath,[require.resolve('@vscode/vsce/vsce'),'package','--out',out],{stdio:'inherit'});if(result.error)throw result.error;process.exitCode=result.status??1\""
   },

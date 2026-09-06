@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+
+- Persist refreshed upstream model IDs in the active Codex provider definition so the VS Code Codex model picker can discover models added by a provider after `/models` refresh.
+- Keep each provider's endpoint, model list, selected model, credentials, and managed configuration independent; local edits or refreshes do not overwrite other providers or other CLI targets.
+- Scope Codex updates to the selected provider and current Extension Host while preserving unrelated local and remote configurations.
+
 ## 1.4.0
 
 - Codex 配置改为结构化 TOML 合并与恢复；保留 Codex 自行写入的根设置、Desktop、MCP、Projects、Features 和其它 Provider，不再把这些追加内容误报为托管配置漂移。

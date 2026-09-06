@@ -37,6 +37,7 @@ const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const EXTENSION_VERSION = PACKAGE_MANIFEST.version;
 const MAX_MODEL_RESPONSE_BYTES = 4 * 1024 * 1024;
 const PENDING_PROFILE_SECRET = Symbol('pendingProfileSecret');
+const MODEL_CATALOG_DIRECTORY = path.join('.modelmux', 'model-catalogs');
 const CUSTOM_KINDS = new Set(['customResponses', 'customChat', 'customAnthropic']);
 const TARGET_IDS = ['codex', 'claude', 'gemini', 'grok', 'opencode', 'openclaw', 'hermes'];
 const TARGET_LABELS = {
@@ -78,6 +79,122 @@ function expandUserPath(value) {
 function codexHomeDirectory() {
   const configured = expandUserPath(process.env.CODEX_HOME);
   return configured || path.join(os.homedir(), '.codex');
+}
+
+function safeModelCatalogSegment(value, fallback) {
+  const segment = String(value || '')
+    .replace(/[^A-Za-z0-9_.-]+/g, '_')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 64);
+  return segment || fallback;
+}
+
+/**
+ * Return a stable, provider-specific catalog path under the active CODEX_HOME.
+ * The optional scope id lets callers keep otherwise-identical profiles from
+ * different extension hosts separate when they intentionally share a home.
+ */
+function modelCatalogPathForProfile(profile, codexDir = codexHomeDirectory(), scopeId = '') {
+  if (!profile || profile.kind !== 'customResponses') return undefined;
+  const root = path.resolve(String(codexDir || codexHomeDirectory()));
+  const providerId = String(profile.providerId || 'provider');
+  const profileId = String(profile.id || 'profile');
+  const identity = `${scopeId || ''}\u0000${profileId}\u0000${providerId}`;
+  const digest = crypto.createHash('sha256').update(identity, 'utf8').digest('hex').slice(0, 20);
+  const label = `${safeModelCatalogSegment(providerId, 'provider')}-${safeModelCatalogSegment(profileId, 'profile')}`.slice(0, 120);
+  return path.join(root, MODEL_CATALOG_DIRECTORY, `${label}-${digest}.json`);
+}
+
+function codexDirectoryForFiles(files) {
+  if (files && files.codexDir) return files.codexDir;
+  if (files && files.config) return path.dirname(files.config);
+  return codexHomeDirectory();
+}
+
+function modelCatalogPathForFiles(context, profile, files) {
+  return modelCatalogPathForProfile(
+    profile,
+    codexDirectoryForFiles(files)
+  );
+}
+
+function modelCatalogModels(profile, selectedModel, explicitModels) {
+  const source = explicitModels === undefined
+    ? [...(profile && Array.isArray(profile.models) ? profile.models : []), selectedModel]
+    : [...(Array.isArray(explicitModels) ? explicitModels : []), selectedModel];
+  const models = [];
+  const seen = new Set();
+  for (const value of source) {
+    const model = String(value || '').trim();
+    if (!model || model.length > 512 || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+  if (!models.length) throw new Error('至少需要一个模型 ID 才能生成 Codex 模型目录。');
+  return models;
+}
+
+function buildModelCatalog(profile, selectedModel, options = {}) {
+  const models = modelCatalogModels(profile, selectedModel, options.models);
+  const providerName = String(profile && (profile.providerName || profile.name) || 'Custom provider').trim();
+  const fetchedAt = options.fetchedAt || new Date().toISOString();
+  const clientVersion = options.clientVersion || `modelmux-${EXTENSION_VERSION}`;
+  return {
+    fetched_at: fetchedAt,
+    etag: options.etag === undefined ? null : options.etag,
+    client_version: clientVersion,
+    models: models.map((slug, index) => ({
+      include_skills_usage_instructions: false,
+      priority: index + 1,
+      use_responses_lite: true,
+      description: `${providerName} model`,
+      shell_type: 'unified_exec',
+      default_reasoning_level: 'low',
+      default_verbosity: 'low',
+      supported_in_api: true,
+      supported_reasoning_levels: [
+        { description: 'Fast responses with lighter reasoning', effort: 'low' }
+      ],
+      web_search_tool_type: 'text_and_image',
+      additional_speed_tiers: [],
+      include_apps_usage_instructions: false,
+      slug,
+      multi_agent_version: 'v1',
+      tool_mode: 'code_mode_only',
+      include_plugin_usage_instructions: false,
+      context_window: 272000,
+      node_repl_disabled: false,
+      display_name: slug,
+      support_verbosity: true,
+      apply_patch_tool_type: 'freeform',
+      supports_search_tool: true,
+      availability_nux: null,
+      comp_hash: 'modelmux',
+      upgrade: null,
+      input_modalities: ['text', 'image'],
+      node_repl_auto_review_required: false,
+      service_tiers: [],
+      model_messages: null,
+      visibility: 'list',
+      supports_image_detail_original: true,
+      supports_parallel_tool_calls: true,
+      truncation_policy: { mode: 'tokens', limit: 10000 },
+      effective_context_window_percent: 95,
+      max_context_window: 872000,
+      default_reasoning_summary: 'none',
+      experimental_supported_tools: [],
+      base_instructions: 'You are Codex.'
+    }))
+  };
+}
+
+async function writeModelCatalogForProfile(context, profile, selectedModel, files, expectedSnapshot, options = {}) {
+  if (!profile || profile.kind !== 'customResponses') return undefined;
+  const catalogPath = options.path || modelCatalogPathForFiles(context, profile, files);
+  const content = JSON.stringify(buildModelCatalog(profile, selectedModel, options), null, 2) + '\n';
+  const snapshot = expectedSnapshot || await readRegularFileSnapshot(catalogPath);
+  await writeAtomic(catalogPath, content, snapshot);
+  return { path: catalogPath, content, snapshot };
 }
 
 function isWslEnvironment() {
@@ -786,8 +903,12 @@ function reasoningLine(profile, model) {
   return `model_reasoning_effort = "${tomlString(policy)}"\n`;
 }
 
-function buildManagedConfig(profile, model, tokenPath, resolvedSecret = undefined) {
+function buildManagedConfig(profile, model, tokenPath, resolvedSecret = undefined, options = {}) {
   const settings = readGlobalSettings();
+  const inferredCodexDir = options.codexDir || (tokenPath ? path.dirname(tokenPath) : codexHomeDirectory());
+  const catalogPath = profile && profile.kind === 'customResponses'
+    ? options.catalogPath || modelCatalogPathForProfile(profile, inferredCodexDir)
+    : undefined;
   const common = `${MANAGED_MARKER}\n# profile_id = ${tomlCommentText(profile.id)}\n# profile_name = ${tomlCommentText(profile.name)}\nmodel = "${tomlString(model)}"\nmodel_provider = "${tomlString(providerIdForProfile(profile))}"\n\napproval_policy = "${tomlString(settings.approvalPolicy)}"\nsandbox_mode = "${tomlString(settings.sandboxMode)}"\n${reasoningLine(profile, model)}`;
 
   if (['openai', 'ollama', 'lmstudio'].includes(profile.kind)) return `${common}\n`;
@@ -807,7 +928,7 @@ function buildManagedConfig(profile, model, tokenPath, resolvedSecret = undefine
   const requestRetries = clampInteger(profile.requestMaxRetries, 0, 0, 20);
   const streamRetries = clampInteger(profile.streamMaxRetries, 2, 0, 20);
   const streamTimeout = clampInteger(profile.streamIdleTimeoutMs, 300000, 1000, 3600000);
-  let result = `${common}\n[model_providers.${profile.providerId}]\nname = "${tomlString(profile.providerName || profile.name)}"\nbase_url = "${tomlString(validatedBase.normalized)}"\nwire_api = "responses"\nrequest_max_retries = ${requestRetries}\nstream_max_retries = ${streamRetries}\nstream_idle_timeout_ms = ${streamTimeout}\n`;
+  let result = `${common}${catalogPath ? `model_catalog_json = "${tomlString(catalogPath)}"\n` : ''}\n[model_providers.${profile.providerId}]\nname = "${tomlString(profile.providerName || profile.name)}"\nbase_url = "${tomlString(validatedBase.normalized)}"\nwire_api = "responses"\nrequest_max_retries = ${requestRetries}\nstream_max_retries = ${streamRetries}\nstream_idle_timeout_ms = ${streamTimeout}\n`;
 
   if (profile.supportsWebsockets) result += 'supports_websockets = true\n';
   if (Object.keys(normalizeStringMap(profile.queryParams)).length) result += `query_params = ${tomlInlineMap(profile.queryParams)}\n`;
@@ -1273,7 +1394,7 @@ function contentHash(content) {
 // deliberately small: every field ModelMux writes is still checked, while
 // unknown Codex fields and sections are ignored.
 const MANAGED_CODEX_ROOT_KEYS = new Set([
-  'model', 'model_provider', 'approval_policy', 'sandbox_mode', 'model_reasoning_effort'
+  'model', 'model_provider', 'model_catalog_json', 'approval_policy', 'sandbox_mode', 'model_reasoning_effort'
 ]);
 
 function managedCodexConfigProjection(content, options = {}) {
@@ -1326,7 +1447,9 @@ async function expectedManagedCodexProjection(context, files, originalState, act
       maskSecrets = false;
     }
     return {
-      value: managedCodexConfigProjection(buildManagedConfig(profile, model, files.token, secret), { maskSecrets }),
+      value: managedCodexConfigProjection(buildManagedConfig(profile, model, files.token, secret, {
+        codexDir: files.codexDir
+      }), { maskSecrets }),
       maskSecrets
     };
   } catch {
@@ -2639,7 +2762,9 @@ async function chooseProfile(context, title, predicate = () => true) {
     return undefined;
   }
 
-  const activeId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
+  const targetId = getSelectedTargetId(context);
+  const activeRecord = getActiveTargets(context)[targetId];
+  const activeId = activeRecord && activeRecord.profileId;
   const selected = await vscode.window.showQuickPick(profiles.map(profile => ({
     label: `${profile.id === activeId ? '$(check) ' : ''}${profile.name}`,
     description: providerDescription(profile),
@@ -2785,9 +2910,30 @@ async function refreshModels(context) {
           '获取模型期间 Provider 或凭据已变化。请重新刷新，避免写入过期模型列表。'
         ));
       }
-      latest.models = models;
-      if (!models.includes(latest.selectedModel)) latest.selectedModel = models[0];
-      await saveProfiles(context, current.map(item => item.id === latest.id ? latest : item));
+      const updatedProfile = {
+        ...latest,
+        models: [...models],
+        selectedModel: models.includes(latest.selectedModel) ? latest.selectedModel : models[0]
+      };
+      const files = pathsForCurrentUser();
+      const catalogPath = modelCatalogPathForFiles(context, updatedProfile, files);
+      const catalogSnapshot = catalogPath ? await readRegularFileSnapshot(catalogPath) : undefined;
+      let catalog;
+      try {
+        if (catalogPath) catalog = await writeModelCatalogForProfile(
+          context, updatedProfile, updatedProfile.selectedModel, files, catalogSnapshot, { path: catalogPath }
+        );
+        await saveProfiles(context, current.map(item => item.id === latest.id ? updatedProfile : item));
+      } catch (error) {
+        if (catalog && catalogPath && catalogSnapshot) {
+          try {
+            await restoreFileSnapshot(catalogPath, catalogSnapshot, { configExists: true, currentHash: contentHash(catalog.content) });
+          } catch (rollbackError) {
+            throw new Error(`${error.message || error}；模型目录回滚失败：${rollbackError.message || rollbackError}`, { cause: error });
+          }
+        }
+        throw error;
+      }
     });
     await vscode.window.showInformationMessage(`已获取 ${models.length} 个模型。`);
   } catch (error) {
@@ -2825,8 +2971,31 @@ async function chooseModelForProfile(context, profile) {
           title: '正在刷新模型列表…',
           cancellable: false
         }, () => fetchModelsForProfile(context, profile));
-        profile.models = models;
-        await saveProfiles(context, getProfiles(context).map(item => item.id === profile.id ? profile : item));
+        const updatedProfile = {
+          ...profile,
+          models: [...models],
+          selectedModel: models.includes(profile.selectedModel) ? profile.selectedModel : models[0]
+        };
+        const files = pathsForCurrentUser();
+        const catalogPath = modelCatalogPathForFiles(context, updatedProfile, files);
+        const catalogSnapshot = catalogPath ? await readRegularFileSnapshot(catalogPath) : undefined;
+        let catalog;
+        try {
+          if (catalogPath) catalog = await writeModelCatalogForProfile(
+            context, updatedProfile, updatedProfile.selectedModel, files, catalogSnapshot, { path: catalogPath }
+          );
+          await saveProfiles(context, getProfiles(context).map(item => item.id === profile.id ? updatedProfile : item));
+        } catch (error) {
+          if (catalog && catalogPath && catalogSnapshot) {
+            try {
+              await restoreFileSnapshot(catalogPath, catalogSnapshot, { configExists: true, currentHash: contentHash(catalog.content) });
+            } catch (rollbackError) {
+              throw new Error(`${error.message || error}；模型目录回滚失败：${rollbackError.message || rollbackError}`, { cause: error });
+            }
+          }
+          throw error;
+        }
+        Object.assign(profile, updatedProfile);
         continue;
       } catch (error) {
         await vscode.window.showErrorMessage(`刷新失败：${error.message || error}`);
@@ -2870,6 +3039,9 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
   let backupSnapshot;
   let stateSnapshot;
   let tokenSnapshot;
+  let catalogSnapshot;
+  let catalogPath;
+  let catalogContent;
   let previousActive;
   let managedContent;
   let result;
@@ -2891,13 +3063,18 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
     backupSnapshot = await readRegularFileSnapshot(files.backup);
     stateSnapshot = await readRegularFileSnapshot(files.originalState);
     tokenSnapshot = await readRegularFileSnapshot(files.token);
+    catalogPath = modelCatalogPathForFiles(context, profile, files);
+    if (catalogPath) catalogSnapshot = await readRegularFileSnapshot(catalogPath);
     previousActive = getActiveTargets(context).codex;
     takeoverStarted = true;
     createdBackup = await ensureOriginalBackup(files, configSnapshot);
     await assertTargetSnapshotUnchanged(management, files);
 
     const updatedProfile = { ...profile, selectedModel: model };
-    const desiredContent = buildManagedConfig(updatedProfile, model, files.token, resolvedSecret);
+    const desiredContent = buildManagedConfig(updatedProfile, model, files.token, resolvedSecret, {
+      catalogPath,
+      codexDir: files.codexDir
+    });
     managedContent = management.configExists
       ? mergeManagedCodexConfig(desiredContent, await fs.promises.readFile(files.config, 'utf8'))
       : desiredContent;
@@ -2913,6 +3090,10 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
       await removeRuntimeToken(files.token);
     }
 
+    if (catalogPath) {
+      const catalog = await writeModelCatalogForProfile(context, updatedProfile, model, files, catalogSnapshot, { path: catalogPath });
+      catalogContent = catalog.content;
+    }
     await writeAtomic(files.config, managedContent, management);
     configWritten = true;
     const originalState = await readOriginalState(files);
@@ -2951,6 +3132,14 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
       try {
         if (tokenSnapshot.exists) await writeRuntimeToken(files.token, tokenSnapshot.content);
         else await removeRuntimeToken(files.token);
+      } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    }
+    if (catalogContent && catalogPath && catalogSnapshot) {
+      try {
+        await restoreFileSnapshot(catalogPath, catalogSnapshot, {
+          configExists: true,
+          currentHash: contentHash(catalogContent)
+        });
       } catch (rollbackError) { rollbackErrors.push(rollbackError); }
     }
     if (profileUpdateStarted) {
@@ -3193,7 +3382,8 @@ async function showStatus(context) {
   const runtimeToken = await fileExists(files.token);
   const originalState = await readOriginalState(files);
   const profiles = getProfiles(context);
-  const activeId = getEnvironmentState(context, ACTIVE_PROFILE_KEY);
+  const activeRecord = getActiveTargets(context).codex;
+  const activeId = activeRecord && activeRecord.profileId;
   const active = profiles.find(item => item.id === activeId);
   const profileLines = [];
   for (const profile of profiles) {
@@ -3353,11 +3543,20 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
   }
 
   try {
-    const desired = buildManagedConfig(profile, model, files.token, resolvedSecret);
+    const desired = buildManagedConfig(profile, model, files.token, resolvedSecret, {
+      catalogPath: modelCatalogPathForFiles(context, profile, files),
+      codexDir: files.codexDir
+    });
     const current = await readConfigText(files.config);
     if (contentHash(current) !== management.originalState.lastAppliedHash) {
       await updateStatusBar(context, statusBar, files);
       return;
+    }
+    if (profile.kind === 'customResponses') {
+      const catalogPath = modelCatalogPathForFiles(context, profile, files);
+      if (catalogPath && !(await fileExists(catalogPath))) {
+        await writeModelCatalogForProfile(context, profile, model, files, undefined, { path: catalogPath });
+      }
     }
     const merged = mergeManagedCodexConfig(desired, current);
     if (current !== merged) {
@@ -3822,7 +4021,10 @@ async function proposedTargetContent(context, targetId, profile, model) {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
     const placeholder = profile.kind === 'customResponses' && authMode === 'secret' && process.platform === 'win32'
       ? redactedPreviewSecret() : undefined;
-    const desired = buildManagedConfig(profile, model, files.token, placeholder);
+    const desired = buildManagedConfig(profile, model, files.token, placeholder, {
+      catalogPath: modelCatalogPathForFiles(context, profile, files),
+      codexDir: files.codexDir
+    });
     const current = await readConfigText(files.config);
     return current.trim() ? mergeManagedCodexConfig(desired, current) : desired;
   }
@@ -4397,9 +4599,30 @@ class DashboardViewProvider {
                 '获取模型期间 Provider 或凭据已变化，请重新刷新。'
               ));
             }
-            latest.models = models;
-            if (!models.includes(latest.selectedModel)) latest.selectedModel = models[0];
-            await saveProfiles(this.context, current.map(item => item.id === latest.id ? latest : item));
+            const updatedProfile = {
+              ...latest,
+              models: [...models],
+              selectedModel: models.includes(latest.selectedModel) ? latest.selectedModel : models[0]
+            };
+            const files = pathsForCurrentUser();
+            const catalogPath = modelCatalogPathForFiles(this.context, updatedProfile, files);
+            const catalogSnapshot = catalogPath ? await readRegularFileSnapshot(catalogPath) : undefined;
+            let catalog;
+            try {
+              if (catalogPath) catalog = await writeModelCatalogForProfile(
+                this.context, updatedProfile, updatedProfile.selectedModel, files, catalogSnapshot, { path: catalogPath }
+              );
+              await saveProfiles(this.context, current.map(item => item.id === latest.id ? updatedProfile : item));
+            } catch (error) {
+              if (catalog && catalogPath && catalogSnapshot) {
+                try {
+                  await restoreFileSnapshot(catalogPath, catalogSnapshot, { configExists: true, currentHash: contentHash(catalog.content) });
+                } catch (rollbackError) {
+                  throw new Error(`${error.message || error}；模型目录回滚失败：${rollbackError.message || rollbackError}`, { cause: error });
+                }
+              }
+              throw error;
+            }
           });
           await this.refresh();
           await this.respond(requestId, true, { models });
@@ -4653,6 +4876,9 @@ module.exports = {
   __test: {
     pathsForCurrentUser,
     runtimeTokenPath,
+    modelCatalogPathForProfile,
+    buildModelCatalog,
+    writeModelCatalogForProfile,
     resolveUnixCatCommand,
     authCommandForToken,
     buildManagedConfig,
