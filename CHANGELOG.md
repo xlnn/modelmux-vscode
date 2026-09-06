@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1
+
+- Restore Codex's native model names and reasoning-effort choices for custom Responses providers by reusing matching metadata from the local Codex model catalog.
+- Keep a multi-level reasoning picker and canonical GPT model names available when matching local metadata has not been cached yet.
+
 ## 1.5.0
 
 - Persist refreshed upstream model IDs in the active Codex provider definition so the VS Code Codex model picker can discover models added by a provider after `/models` refresh.

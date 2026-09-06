@@ -65,6 +65,43 @@ try {
   assert.strictEqual(firstCatalog.models[0].base_instructions, 'You are Codex.');
   assert.strictEqual(firstCatalog.models[0].model_messages, null);
 
+  const nativeMetadata = {
+    fetched_at: '2026-09-06T00:00:00.000Z',
+    models: [{
+      slug: 'gpt-6-astra',
+      display_name: 'GPT-6-Astra',
+      description: 'Native Astra metadata',
+      default_reasoning_level: 'low',
+      supported_reasoning_levels: [
+        { effort: 'low', description: 'Low' },
+        { effort: 'medium', description: 'Medium' },
+        { effort: 'high', description: 'High' },
+        { effort: 'xhigh', description: 'Extra high' },
+        { effort: 'max', description: 'Maximum' },
+        { effort: 'ultra', description: 'Ultra' }
+      ],
+      visibility: 'list',
+      priority: 99
+    }]
+  };
+  const nativeProfile = profile('profile-native', 'native_gateway', ['gpt-6-astra']);
+  const inheritedCatalog = api.buildModelCatalog(nativeProfile, 'gpt-6-astra', { referenceCatalog: nativeMetadata });
+  assert.strictEqual(inheritedCatalog.models[0].display_name, 'GPT-6-Astra');
+  assert.deepStrictEqual(
+    inheritedCatalog.models[0].supported_reasoning_levels.map(item => item.effort),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    'matching Codex metadata must preserve the native effort picker'
+  );
+  assert.strictEqual(inheritedCatalog.models[0].priority, 1, 'provider order must override cached priority');
+
+  const fallbackCatalog = api.buildModelCatalog(nativeProfile, 'gpt-6-astra');
+  assert.strictEqual(fallbackCatalog.models[0].display_name, 'GPT-6-Astra');
+  assert.deepStrictEqual(
+    fallbackCatalog.models[0].supported_reasoning_levels.map(item => item.effort),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    'recognized reasoning models must remain adjustable when the Codex cache is unavailable'
+  );
+
   const firstFiles = {
     targetId: 'codex',
     codexDir: sandbox,
@@ -81,6 +118,16 @@ try {
   assert.strictEqual(typeof writtenFirst, 'function');
 
   (async () => {
+    fs.writeFileSync(path.join(sandbox, 'models_cache.json'), JSON.stringify(nativeMetadata));
+    await writtenFirst(context, nativeProfile, 'gpt-6-astra', firstFiles);
+    const nativePath = api.modelCatalogPathForProfile(nativeProfile, sandbox);
+    const writtenNative = JSON.parse(fs.readFileSync(nativePath, 'utf8')).models[0];
+    assert.strictEqual(writtenNative.display_name, 'GPT-6-Astra');
+    assert.deepStrictEqual(
+      writtenNative.supported_reasoning_levels.map(item => item.effort),
+      ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+    );
+
     await writtenFirst(context, first, 'model-new', firstFiles);
     const firstBefore = fs.readFileSync(firstPath, 'utf8');
     await writtenFirst(context, second, 'model-three', firstFiles);

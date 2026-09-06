@@ -134,9 +134,85 @@ function modelCatalogModels(profile, selectedModel, explicitModels) {
   return models;
 }
 
+const FALLBACK_REASONING_LEVELS = [
+  { effort: 'low', description: 'Fast responses with lighter reasoning' },
+  { effort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+  { effort: 'high', description: 'Greater reasoning depth for complex problems' },
+  { effort: 'xhigh', description: 'Extra high reasoning depth for complex problems' },
+  { effort: 'max', description: 'Maximum reasoning depth for the hardest problems' },
+  { effort: 'ultra', description: 'Maximum reasoning with automatic task delegation' }
+];
+
+function fallbackModelDisplayName(slug) {
+  return String(slug || '')
+    .replace(/^gpt-/i, 'GPT-')
+    .replace(/-(astra|sol|terra|luna|codex|max|mini)(?=-|$)/gi, (_match, name) => (
+      `-${name.charAt(0).toUpperCase()}${name.slice(1).toLowerCase()}`
+    ));
+}
+
+function referenceCatalogModel(referenceCatalog, slug) {
+  const models = referenceCatalog && Array.isArray(referenceCatalog.models)
+    ? referenceCatalog.models : [];
+  const match = models.find(item => item && item.slug === slug);
+  if (!match || typeof match !== 'object' || Array.isArray(match)) return undefined;
+  try { return JSON.parse(JSON.stringify(match)); }
+  catch { return undefined; }
+}
+
+function fallbackReasoningLevels(slug) {
+  if (!isLikelyOpenAIReasoningModel(slug)) return [FALLBACK_REASONING_LEVELS[0]];
+  const id = String(slug || '').toLowerCase();
+  const count = /^gpt-6-astra(?:-|$)|^gpt-5\.6-(?:sol|terra)(?:-|$)/.test(id)
+    ? 6
+    : /^(?:gpt-reserve|gpt-5\.6-luna|codex-auto-review)(?:-|$)/.test(id) ? 5 : 4;
+  return FALLBACK_REASONING_LEVELS.slice(0, count).map(level => ({ ...level }));
+}
+
+function fallbackCatalogModel(profile, slug) {
+  const providerName = String(profile && (profile.providerName || profile.name) || 'Custom provider').trim();
+  return {
+    include_skills_usage_instructions: false,
+    use_responses_lite: true,
+    description: `${providerName} model`,
+    shell_type: 'unified_exec',
+    default_reasoning_level: 'low',
+    default_verbosity: 'low',
+    supported_in_api: true,
+    supported_reasoning_levels: fallbackReasoningLevels(slug),
+    web_search_tool_type: 'text_and_image',
+    additional_speed_tiers: [],
+    include_apps_usage_instructions: false,
+    multi_agent_version: 'v1',
+    tool_mode: 'code_mode_only',
+    include_plugin_usage_instructions: false,
+    context_window: 272000,
+    node_repl_disabled: false,
+    display_name: fallbackModelDisplayName(slug),
+    support_verbosity: true,
+    apply_patch_tool_type: 'freeform',
+    supports_search_tool: true,
+    availability_nux: null,
+    comp_hash: 'modelmux',
+    upgrade: null,
+    input_modalities: ['text', 'image'],
+    node_repl_auto_review_required: false,
+    service_tiers: [],
+    model_messages: null,
+    visibility: 'list',
+    supports_image_detail_original: true,
+    supports_parallel_tool_calls: true,
+    truncation_policy: { mode: 'tokens', limit: 10000 },
+    effective_context_window_percent: 95,
+    max_context_window: 872000,
+    default_reasoning_summary: 'none',
+    experimental_supported_tools: [],
+    base_instructions: 'You are Codex.'
+  };
+}
+
 function buildModelCatalog(profile, selectedModel, options = {}) {
   const models = modelCatalogModels(profile, selectedModel, options.models);
-  const providerName = String(profile && (profile.providerName || profile.name) || 'Custom provider').trim();
   const fetchedAt = options.fetchedAt || new Date().toISOString();
   const clientVersion = options.clientVersion || `modelmux-${EXTENSION_VERSION}`;
   return {
@@ -144,54 +220,33 @@ function buildModelCatalog(profile, selectedModel, options = {}) {
     etag: options.etag === undefined ? null : options.etag,
     client_version: clientVersion,
     models: models.map((slug, index) => ({
-      include_skills_usage_instructions: false,
-      priority: index + 1,
-      use_responses_lite: true,
-      description: `${providerName} model`,
-      shell_type: 'unified_exec',
-      default_reasoning_level: 'low',
-      default_verbosity: 'low',
-      supported_in_api: true,
-      supported_reasoning_levels: [
-        { description: 'Fast responses with lighter reasoning', effort: 'low' }
-      ],
-      web_search_tool_type: 'text_and_image',
-      additional_speed_tiers: [],
-      include_apps_usage_instructions: false,
+      ...(referenceCatalogModel(options.referenceCatalog, slug) || fallbackCatalogModel(profile, slug)),
       slug,
-      multi_agent_version: 'v1',
-      tool_mode: 'code_mode_only',
-      include_plugin_usage_instructions: false,
-      context_window: 272000,
-      node_repl_disabled: false,
-      display_name: slug,
-      support_verbosity: true,
-      apply_patch_tool_type: 'freeform',
-      supports_search_tool: true,
-      availability_nux: null,
-      comp_hash: 'modelmux',
-      upgrade: null,
-      input_modalities: ['text', 'image'],
-      node_repl_auto_review_required: false,
-      service_tiers: [],
-      model_messages: null,
-      visibility: 'list',
-      supports_image_detail_original: true,
-      supports_parallel_tool_calls: true,
-      truncation_policy: { mode: 'tokens', limit: 10000 },
-      effective_context_window_percent: 95,
-      max_context_window: 872000,
-      default_reasoning_summary: 'none',
-      experimental_supported_tools: [],
-      base_instructions: 'You are Codex.'
+      priority: index + 1,
+      visibility: 'list'
     }))
   };
+}
+
+async function readCodexModelCache(codexDir) {
+  const cachePath = path.join(path.resolve(String(codexDir || codexHomeDirectory())), 'models_cache.json');
+  try {
+    const snapshot = await readRegularFileSnapshot(cachePath);
+    if (!snapshot.exists || Buffer.byteLength(snapshot.content, 'utf8') > MAX_MODEL_RESPONSE_BYTES) return undefined;
+    const parsed = JSON.parse(snapshot.content);
+    return parsed && Array.isArray(parsed.models) ? parsed : undefined;
+  } catch (error) {
+    console.warn(`Could not reuse Codex model metadata from ${cachePath}:`, error);
+    return undefined;
+  }
 }
 
 async function writeModelCatalogForProfile(context, profile, selectedModel, files, expectedSnapshot, options = {}) {
   if (!profile || profile.kind !== 'customResponses') return undefined;
   const catalogPath = options.path || modelCatalogPathForFiles(context, profile, files);
-  const content = JSON.stringify(buildModelCatalog(profile, selectedModel, options), null, 2) + '\n';
+  const referenceCatalog = options.referenceCatalog
+    || await readCodexModelCache(codexDirectoryForFiles(files));
+  const content = JSON.stringify(buildModelCatalog(profile, selectedModel, { ...options, referenceCatalog }), null, 2) + '\n';
   const snapshot = expectedSnapshot || await readRegularFileSnapshot(catalogPath);
   await writeAtomic(catalogPath, content, snapshot);
   return { path: catalogPath, content, snapshot };
