@@ -1445,15 +1445,18 @@ function contentHash(content) {
 // Codex may append its own settings (desktop integration, MCP servers,
 // project trust, etc.) to the same file after ModelMux writes the provider.
 // Those settings are outside ModelMux's ownership boundary and must not turn
-// an otherwise valid provider into a drift warning. Keep this projection
-// deliberately small: every field ModelMux writes is still checked, while
-// unknown Codex fields and sections are ignored.
+// an otherwise valid provider into a drift warning. Model and reasoning effort
+// are shared runtime selections because Codex's own pickers persist them here;
+// provider, authentication, policy, and catalog fields remain protected.
 const MANAGED_CODEX_ROOT_KEYS = new Set([
   'model', 'model_provider', 'model_catalog_json', 'approval_policy', 'sandbox_mode', 'model_reasoning_effort'
 ]);
+const CODEX_RUNTIME_SELECTION_KEYS = new Set(['model', 'model_reasoning_effort']);
+const MANAGED_CODEX_HASH_VERSION = 2;
 
 function managedCodexConfigProjection(content, options = {}) {
   const maskSecrets = options.maskSecrets !== false;
+  const includeRuntimeSelection = options.includeRuntimeSelection === true;
   const source = String(content || '').replace(/^\uFEFF/, '');
   let parsed;
   try { parsed = TOML.parse(source); }
@@ -1465,6 +1468,7 @@ function managedCodexConfigProjection(content, options = {}) {
     || /^#\s*profile_(?:id|name)\s*=/.test(line));
   const root = {};
   for (const key of MANAGED_CODEX_ROOT_KEYS) {
+    if (!includeRuntimeSelection && CODEX_RUNTIME_SELECTION_KEYS.has(key)) continue;
     if (Object.prototype.hasOwnProperty.call(parsed, key)) root[key] = parsed[key];
   }
   const provider = providerId && parsed.model_providers && parsed.model_providers[providerId];
@@ -1498,8 +1502,8 @@ async function expectedManagedCodexProjection(context, files, originalState, act
     if (process.platform === 'win32' && profile.kind === 'customResponses'
       && ['secret', 'bearer'].includes(profile.authMode)) {
       secret = context && context.secrets && await context.secrets.get(profileSecretKey(context, profile.id));
-      if (!secret) return undefined;
-      maskSecrets = false;
+      if (secret) maskSecrets = false;
+      else secret = '<unavailable-secret>';
     }
     return {
       value: managedCodexConfigProjection(buildManagedConfig(profile, model, files.token, secret, {
@@ -1726,7 +1730,14 @@ async function managedCodexConfigMatches(context, files, content, originalState,
   const currentHash = managedCodexConfigHash(content, { maskSecrets: false });
   if (!currentHash) return false;
   if (originalState && typeof originalState.managedConfigHash === 'string') {
-    return currentHash === originalState.managedConfigHash;
+    if (originalState.managedConfigHashVersion === MANAGED_CODEX_HASH_VERSION) {
+      return currentHash === originalState.managedConfigHash;
+    }
+    const legacyHash = managedCodexConfigHash(content, {
+      maskSecrets: false,
+      includeRuntimeSelection: true
+    });
+    if (legacyHash === originalState.managedConfigHash) return true;
   }
   const expected = await expectedManagedCodexProjection(context, files, originalState, active);
   return Boolean(expected && managedCodexConfigProjection(content, { maskSecrets: expected.maskSecrets }) === expected.value);
@@ -1843,7 +1854,8 @@ async function reconcileManagedCodexState(context, files = pathsForCurrentUser()
   const legacyState = !originalState.lastAppliedHash;
   const projectedHash = managedCodexConfigHash(content, { maskSecrets: false });
   if (legacyState
-    || !originalState.managedConfigHash
+    || originalState.managedConfigHashVersion !== MANAGED_CODEX_HASH_VERSION
+    || originalState.managedConfigHash !== projectedHash
     || originalState.profileId !== profile.id
     || originalState.model !== model) {
     await writeOriginalState(files, originalState.existed, {
@@ -1852,6 +1864,7 @@ async function reconcileManagedCodexState(context, files = pathsForCurrentUser()
       // clean snapshot and then erase those settings.
       lastAppliedHash: originalState.lastAppliedHash || currentHash,
       managedConfigHash: projectedHash,
+      managedConfigHashVersion: MANAGED_CODEX_HASH_VERSION,
       profileId: profile.id,
       model,
       automaticRefreshDisabled: legacyState ? true : originalState.automaticRefreshDisabled,
@@ -1872,9 +1885,10 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
   const backupSnapshot = await readRegularFileSnapshot(files.backup);
   const configExists = configSnapshot.exists;
   const backupExists = backupSnapshot.exists;
-  const markerManaged = normalizedTarget === 'codex' && configExists
-    ? Boolean(parseManagedCodexMetadata(configSnapshot.content))
-    : false;
+  const managedMetadata = normalizedTarget === 'codex' && configExists
+    ? parseManagedCodexMetadata(configSnapshot.content)
+    : undefined;
+  const markerManaged = Boolean(managedMetadata);
   const hasManagedRecord = Boolean(originalState && originalState.lastAppliedHash);
 
   let status = 'original';
@@ -1914,6 +1928,7 @@ async function getTargetManagementState(context, targetId, files = pathsForTarge
     currentHash,
     managedMatch,
     managedConfigHash: currentManagedConfigHash,
+    currentModel: managedMetadata && managedMetadata.model,
     hasUnmanagedChanges,
     managed: status !== 'original',
     canRestore: Boolean(status !== 'original' && originalState && (!originalState.existed || backupExists)),
@@ -3155,6 +3170,7 @@ async function activateProfile(context, profileId, statusBar, modelOverride, opt
     await writeOriginalState(files, originalState ? originalState.existed : false, {
       lastAppliedHash: contentHash(managedContent),
       managedConfigHash: managedCodexConfigHash(managedContent, { maskSecrets: false }),
+      managedConfigHashVersion: MANAGED_CODEX_HASH_VERSION,
       profileId: updatedProfile.id,
       model,
       automaticRefreshDisabled: undefined,
@@ -3268,6 +3284,7 @@ async function restoreOriginal(context, statusBar, options = {}) {
       await writeOriginalState(files, state.existed, {
         lastAppliedHash: undefined,
         managedConfigHash: undefined,
+        managedConfigHashVersion: undefined,
         profileId: undefined,
         model: undefined,
         restoredAt: new Date().toISOString()
@@ -3482,7 +3499,7 @@ async function updateStatusBar(context, statusBar, files = pathsForTarget(getSel
   const label = targetLabel(targetId);
 
   if (management.status === 'managed-clean' && active) {
-    statusBar.text = `$(server) ${label}: ${activeRecord.model || active.selectedModel || active.name}`;
+    statusBar.text = `$(server) ${label}: ${management.currentModel || activeRecord.model || active.selectedModel || active.name}`;
     statusBar.tooltip = `${active.name}\n${providerDescription(active)}\n${uiText(`Click to manage ${label} model configuration.`, `点击管理 ${label} 的模型配置。`)}`;
   } else if (management.managed) {
     const stateLabels = {
@@ -3619,6 +3636,7 @@ async function recreateRuntimeTokenIfNeededUnlocked(context, statusBar, files = 
       await writeOriginalState(files, originalState.existed, {
         lastAppliedHash: contentHash(merged),
         managedConfigHash: managedCodexConfigHash(merged, { maskSecrets: false }),
+        managedConfigHashVersion: MANAGED_CODEX_HASH_VERSION,
         profileId: profile.id,
         model,
         updatedAt: new Date().toISOString()
@@ -4358,6 +4376,9 @@ async function getDashboardState(context) {
   const activeRecord = activeTargets[selectedTargetId];
   const activeId = activeRecord && activeRecord.profileId;
   const management = await getTargetManagementState(context, selectedTargetId, files);
+  const activeModel = selectedTargetId === 'codex' && management.currentModel
+    ? management.currentModel
+    : activeRecord && activeRecord.model;
   const managed = management.managed;
   const targetMap = await managedTargetMap(context);
   const items = await Promise.all(profiles.map(async profile => {
@@ -4378,7 +4399,7 @@ async function getDashboardState(context) {
     const activeTargetId = (targetMap.get(profile.id) || [])[0];
     return {
       ...profile,
-      selectedModel: active && activeRecord.model ? activeRecord.model : profile.selectedModel,
+      selectedModel: active && activeModel ? activeModel : profile.selectedModel,
       authMode,
       kindLabel: kindLabel(profile.kind),
       description: providerDescription(profile),
@@ -4408,7 +4429,9 @@ async function getDashboardState(context) {
       label: targetLabel(id),
       active: targetManagement.status === 'managed-clean',
       status: targetManagement.status,
-      model: targetActive && targetActive.model,
+      model: id === 'codex' && targetManagement.currentModel
+        ? targetManagement.currentModel
+        : targetActive && targetActive.model,
       configExists: targetManagement.configExists
     };
   }));

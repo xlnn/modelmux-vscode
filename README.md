@@ -1,4 +1,4 @@
-# ModelMux: AI CLI Model Manager 1.5.1
+# ModelMux: AI CLI Model Manager 1.5.2
 
 [中文说明](#中文说明)
 
@@ -19,6 +19,12 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 - Choose the VS Code default font, system UI font, or monospace font.
 - Adjust the dashboard font size from `10px` to `20px` in the ModelMux Settings panel.
 - Restore the VS Code default font or reset the complete appearance configuration with one action.
+
+## What's New in 1.5.2
+
+- Accept model and reasoning-effort changes written by Codex's own pickers without reporting external configuration drift.
+- Keep integrity protection for the active provider, endpoint, authentication, model catalog, approval policy, and sandbox mode.
+- Migrate ModelMux 1.5.1 integrity records automatically and show Codex's current model in the dashboard.
 
 ## What's New in 1.5.1
 
@@ -66,7 +72,7 @@ To install the packaged VSIX manually:
 1. Open the VS Code Extensions view.
 2. Open the `...` menu in the upper-right corner.
 3. Select **Install from VSIX...**.
-4. Select `modelmux-1.5.1.vsix`.
+4. Select `modelmux-1.5.2.vsix`.
 5. Run `Developer: Reload Window`.
 
 For Remote-SSH, WSL, Dev Containers, or Codespaces, install ModelMux in the corresponding remote extension host. ModelMux only changes CLI configuration files in the environment where the extension is running. Provider profiles, active records, and stored API keys are isolated from the local host and from other remote authorities.
@@ -191,26 +197,26 @@ Development and CI use Node.js 22 or newer. The extension bundle remains targete
 The package command reads the package version dynamically and generates:
 
 ```text
-modelmux-1.5.1.vsix
+modelmux-1.5.2.vsix
 ```
 
 The smoke suite covers manifest metadata, appearance settings and localization, export redaction, Webview CSP/DOM/accessibility boundaries, import conflict handling, Codex configuration generation, all six additional CLI adapters, concurrent target state, isolated restore, credential handling, model discovery security, and the bundled extension entry point. GitHub CI runs `npm ci`, `npm run check`, `npm test`, and `npm run build` on Ubuntu, Windows, and macOS.
 
 ## Publishing
 
-Upload `modelmux-1.5.1.vsix` from the Visual Studio Marketplace publisher portal, or publish it from the command line with a Personal Access Token for the `cherry-local` publisher:
+Upload `modelmux-1.5.2.vsix` from the Visual Studio Marketplace publisher portal, or publish it from the command line with a Personal Access Token for the `cherry-local` publisher:
 
 ```bash
-npx vsce publish --packagePath modelmux-1.5.1.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.5.2.vsix -p "$VSCE_PAT"
 ```
 
 PowerShell:
 
 ```powershell
-npx vsce publish --packagePath modelmux-1.5.1.vsix -p $env:VSCE_PAT
+npx vsce publish --packagePath modelmux-1.5.2.vsix -p $env:VSCE_PAT
 ```
 
-The repository is configured as `xlnn/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies that a GitHub Release tag is `v1.5.1`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
+The repository is configured as `xlnn/modelmux-vscode`. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies that a GitHub Release tag is `v1.5.2`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
 
 ## Extension Identity
 
@@ -235,11 +241,17 @@ MIT
 
 ## 中文说明
 
-### ModelMux：AI CLI 模型管理器 1.5.1
+### ModelMux：AI CLI 模型管理器 1.5.2
 
 一个面向 **Windows、macOS、Linux、WSL、Remote-SSH、Dev Container 与 GitHub Codespaces** 的 VS Code 图形化 AI CLI 配置管理插件。
 
 插件可独立切换 Codex、Claude Code、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 的默认 Provider/模型，支持原配置备份、恢复、外部改动检测、环境自检以及不含密钥的 Provider 迁移。
+
+## 1.5.2 Codex 模型选择状态修复
+
+- Codex 自带模型选择器写回模型或思考强度时，不再误报“托管配置已被外部修改”。
+- Provider、端点、认证、模型目录、审批策略和沙箱模式仍受完整性校验保护。
+- 自动迁移 ModelMux 1.5.1 的完整性记录，并在面板中显示 Codex 当前选择的模型。
 
 ## 1.5.1 Codex 原生模型名称与思考强度
 
@@ -305,7 +317,7 @@ Provider 列表项会根据当前 CLI 和协议显示是否兼容。不兼容组
 1. 打开 VS Code 扩展面板。
 2. 点击右上角 `...`。
 3. 选择 **从 VSIX 安装…**。
-4. 选择 `modelmux-1.5.1.vsix`。
+4. 选择 `modelmux-1.5.2.vsix`。
 5. 执行 `Developer: Reload Window`。
 
 在 Remote-SSH、WSL、Dev Container 或 Codespaces 窗口中，应将插件安装在对应的远程扩展主机上。插件只修改它实际运行环境中的 CLI 配置；Provider、活动记录和 API Key 与本机及其它远程 authority 分开保存。
@@ -401,23 +413,23 @@ npm run build
 npm run package
 ```
 
-开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.5.1.vsix`。
+开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.5.2.vsix`。
 
 ## 发布
 
-可在 Visual Studio Marketplace 的 Publisher 管理页面直接上传 `modelmux-1.5.1.vsix`，也可以使用 Publisher `cherry-local` 的 Personal Access Token 从命令行发布：
+可在 Visual Studio Marketplace 的 Publisher 管理页面直接上传 `modelmux-1.5.2.vsix`，也可以使用 Publisher `cherry-local` 的 Personal Access Token 从命令行发布：
 
 ```bash
-npx vsce publish --packagePath modelmux-1.5.1.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.5.2.vsix -p "$VSCE_PAT"
 ```
 
 Windows PowerShell：
 
 ```powershell
-npx vsce publish --packagePath modelmux-1.5.1.vsix -p $env:VSCE_PAT
+npx vsce publish --packagePath modelmux-1.5.2.vsix -p $env:VSCE_PAT
 ```
 
-仓库包含 `.github/workflows/release.yml`。发布流程使用 Node.js 22，并执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`；随后只生成并上传当前版本的 VSIX。GitHub Release 标签必须为 `v1.5.1`；仓库配置 `VSCE_PAT` 后会继续发布到 VS Code Marketplace。
+仓库包含 `.github/workflows/release.yml`。发布流程使用 Node.js 22，并执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`；随后只生成并上传当前版本的 VSIX。GitHub Release 标签必须为 `v1.5.2`；仓库配置 `VSCE_PAT` 后会继续发布到 VS Code Marketplace。
 
 GitHub CI 在 Ubuntu、Windows、macOS 上使用 Node.js 22 执行安装、语法检查、冒烟测试和 bundle 构建。现有测试覆盖：
 

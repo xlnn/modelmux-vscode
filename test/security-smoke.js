@@ -710,6 +710,7 @@ function plannedProfiles(plan) {
     existed: false,
     lastAppliedHash: api.contentHash(codexManagedContent),
     managedConfigHash: api.managedCodexConfigHash(codexManagedContent, { maskSecrets: false }),
+    managedConfigHashVersion: 2,
     profileId: codexExtensionProfile.id,
     model: 'extension-model'
   }));
@@ -742,6 +743,10 @@ function plannedProfiles(plan) {
   fs.writeFileSync(codexExtensionFiles.originalState, JSON.stringify({
     existed: false,
     lastAppliedHash: api.contentHash(codexManagedContent),
+    managedConfigHash: api.managedCodexConfigHash(codexManagedContent, {
+      maskSecrets: false,
+      includeRuntimeSelection: true
+    }),
     profileId: codexExtensionProfile.id,
     model: 'extension-model'
   }));
@@ -765,6 +770,25 @@ function plannedProfiles(plan) {
   fs.writeFileSync(
     codexExtensionFiles.config,
     codexExtendedContent.replace('model = "extension-model"', 'model = "tampered-model"')
+  );
+  const modelChanged = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+  assert.strictEqual(modelChanged.status, 'managed-clean', 'Codex model picker changes must not cause a drift warning');
+  assert.strictEqual(modelChanged.currentModel, 'tampered-model');
+  const migratedModelChange = await api.reconcileManagedCodexState(codexExtensionContext, codexExtensionFiles);
+  assert(migratedModelChange, 'a Codex model change must migrate a version 1.5.1 managed hash');
+  const migratedModelState = JSON.parse(fs.readFileSync(codexExtensionFiles.originalState, 'utf8'));
+  assert.strictEqual(migratedModelState.managedConfigHashVersion, 2);
+  assert.strictEqual(migratedModelState.model, 'tampered-model');
+  assert.strictEqual(api.getActiveTargets(codexExtensionContext).codex.model, 'tampered-model');
+  fs.writeFileSync(
+    codexExtensionFiles.config,
+    codexExtendedContent.replace('model_provider = "gateway"', 'model_provider = "gateway"\nmodel_reasoning_effort = "low"')
+  );
+  const reasoningChanged = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+  assert.strictEqual(reasoningChanged.status, 'managed-clean', 'Codex reasoning picker changes must not cause a drift warning');
+  fs.writeFileSync(
+    codexExtensionFiles.config,
+    codexExtendedContent.replace('base_url = "https://gateway.example/v1"', 'base_url = "https://other.example/v1"')
   );
   const extensionDrifted = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
   assert.strictEqual(extensionDrifted.status, 'managed-drifted', 'managed provider fields must still detect drift');
@@ -936,10 +960,9 @@ function plannedProfiles(plan) {
 
   values.set(stateKey('activeCliTargetsV1'), {});
   values.delete(stateKey('activeProfileIdV2'));
-  // A managed-field edit must block automatic recovery.  Additive comments
-  // and Codex-owned sections are intentionally tolerated by the projection,
-  // but changing the provider/model link is unsafe.
-  fs.writeFileSync(legacyFiles.config, legacyContent.replace('model = "remote-model"', 'model = "tampered-model"'));
+  // A provider edit must block automatic recovery. Runtime model selection and
+  // Codex-owned sections are intentionally tolerated by the projection.
+  fs.writeFileSync(legacyFiles.config, legacyContent.replace('model_provider = "gateway"', 'model_provider = "tampered"'));
   assert.strictEqual(await api.reconcileManagedCodexState(context, legacyFiles), undefined, 'hash mismatch must block automatic state recovery');
   assert.strictEqual(api.getActiveTargets(context).codex, undefined, 'hash mismatch must not recreate an active record');
 

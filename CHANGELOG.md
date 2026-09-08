@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.2
+
+- Treat Codex model and reasoning-effort picker updates as runtime selection changes instead of external configuration drift, while continuing to protect provider, endpoint, authentication, catalog, approval, and sandbox settings.
+- Migrate existing managed-configuration fingerprints without requiring users to reapply a provider, and surface Codex's current model in the dashboard after it changes the shared config file.
+
 ## 1.5.1
 
 - Restore Codex's native model names and reasoning-effort choices for custom Responses providers by reusing matching metadata from the local Codex model catalog.
