@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.4
+
+- Publish the `1.5.3` provider-editor and Codex reasoning updates from a correctly versioned release commit and package them as `modelmux-1.5.4.vsix`.
+- Document the required release order so each GitHub tag points to the commit that contains the matching package version before the release is published.
+
 ## 1.5.3
 
 - Replace the clipped native model datalist in the provider editor with an accessible, searchable, keyboard-navigable list that expands inside the dialog and remains scrollable in short Webviews.
