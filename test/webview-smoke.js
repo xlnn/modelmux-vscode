@@ -86,7 +86,12 @@ try {
   assert(ids.includes('previewRestore'), 'restore diff preview action is missing');
   assert(ids.includes('diagnosticsDialog'), 'structured diagnostics dialog is missing');
   assert(ids.includes('importStrategy'), 'import conflict strategy control is missing');
+  assert(/id="selectedModel"[^>]*role="combobox"[^>]*aria-controls="modelSuggestions"/i.test(html), 'model editor must expose an accessible combobox');
+  assert(/id="modelSuggestions"[^>]*role="listbox"/i.test(html), 'model suggestions must use an in-document listbox');
+  assert(!/<datalist\b/i.test(html), 'native datalist popups are clipped by scrollable Webview dialogs');
   assert(dashboardSource.includes('managementStatus'), 'dashboard must render explicit target management states');
+  assert(dashboardSource.includes('uniqueModelIds'), 'provider model choices must be deduplicated without family filtering');
+  assert(!dashboardSource.includes('isClaudeModelId'), 'model suggestions must not hide models based on their family');
   assert(dashboardSource.includes('profile.managedForSelectedTarget ? t(\'reapply\') : t(\'activate\')'), 'a drifted managed provider must expose the reapply action');
   assert(dashboardSource.includes("result.status === 'cancelled'"), 'cancelled reapply confirmation must not be reported as an activation failure');
   for (const capability of ['canRestore', 'canApply', 'canEdit', 'canDelete', 'canClearSecret']) {
@@ -97,6 +102,8 @@ try {
   assert(dashboardSource.includes("menu.scrollIntoView({ block: 'nearest', inline: 'nearest' })"), 'expanded provider menus must scroll fully into view');
   assert(/\.provider-row \.menu\s*\{[\s\S]*position:\s*static/.test(dashboardCss), 'provider menus must expand their row instead of being clipped overlays');
   assert(/\.provider-row \.menu\s*\{[\s\S]*overflow-y:\s*auto/.test(dashboardCss), 'provider menus must remain scrollable in short Webviews');
+  assert(/\.model-suggestions\s*\{[\s\S]*position:\s*static/.test(dashboardCss), 'model suggestions must expand inside the dialog flow');
+  assert(/\.model-suggestions\s*\{[\s\S]*overflow-y:\s*auto/.test(dashboardCss), 'model suggestions must remain scrollable');
   assert(/:focus-visible/.test(dashboardCss), 'keyboard focus must remain visible');
   assert(dashboardCss.includes('vscode-high-contrast-light'), 'high contrast light theme must receive explicit borders and focus styles');
   assert(dashboardCss.includes('prefers-reduced-motion'), 'dashboard must respect reduced-motion preferences');

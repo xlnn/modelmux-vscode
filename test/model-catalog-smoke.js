@@ -102,6 +102,23 @@ try {
     'recognized reasoning models must remain adjustable when the Codex cache is unavailable'
   );
 
+  const claudeProfile = profile('profile-claude', 'claude_gateway', ['claude-opus-4-7']);
+  const claudeCatalog = api.buildModelCatalog(claudeProfile, 'claude-opus-4-7', {
+    referenceCatalog: {
+      models: [{
+        slug: 'claude-opus-4-7',
+        display_name: 'Claude Opus 4.7',
+        default_reasoning_level: 'low',
+        supported_reasoning_levels: [{ effort: 'low', description: 'Low' }]
+      }]
+    }
+  });
+  assert.deepStrictEqual(
+    claudeCatalog.models[0].supported_reasoning_levels.map(item => item.effort),
+    ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+    'non-GPT models exposed through Codex must receive the full effort picker'
+  );
+
   const firstFiles = {
     targetId: 'codex',
     codexDir: sandbox,

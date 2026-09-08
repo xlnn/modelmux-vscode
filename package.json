@@ -2,7 +2,7 @@
   "name": "codex-config-switcher",
   "displayName": "ModelMux: AI CLI Model Manager",
   "description": "A secure visual model and provider manager for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, OpenClaw, and Hermes.",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "publisher": "cherry-local",
   "license": "MIT",
   "icon": "media/modelmux.png",

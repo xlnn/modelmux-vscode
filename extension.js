@@ -161,11 +161,11 @@ function referenceCatalogModel(referenceCatalog, slug) {
 }
 
 function fallbackReasoningLevels(slug) {
-  if (!isLikelyOpenAIReasoningModel(slug)) return [FALLBACK_REASONING_LEVELS[0]];
   const id = String(slug || '').toLowerCase();
   const count = /^gpt-6-astra(?:-|$)|^gpt-5\.6-(?:sol|terra)(?:-|$)/.test(id)
     ? 6
-    : /^(?:gpt-reserve|gpt-5\.6-luna|codex-auto-review)(?:-|$)/.test(id) ? 5 : 4;
+    : /^(?:gpt-reserve|gpt-5\.6-luna|codex-auto-review)(?:-|$)/.test(id) ? 5
+      : isLikelyOpenAIReasoningModel(slug) ? 4 : FALLBACK_REASONING_LEVELS.length;
   return FALLBACK_REASONING_LEVELS.slice(0, count).map(level => ({ ...level }));
 }
 
@@ -219,12 +219,14 @@ function buildModelCatalog(profile, selectedModel, options = {}) {
     fetched_at: fetchedAt,
     etag: options.etag === undefined ? null : options.etag,
     client_version: clientVersion,
-    models: models.map((slug, index) => ({
-      ...(referenceCatalogModel(options.referenceCatalog, slug) || fallbackCatalogModel(profile, slug)),
-      slug,
-      priority: index + 1,
-      visibility: 'list'
-    }))
+    models: models.map((slug, index) => {
+      const metadata = referenceCatalogModel(options.referenceCatalog, slug) || fallbackCatalogModel(profile, slug);
+      if (!isLikelyOpenAIReasoningModel(slug)) {
+        metadata.default_reasoning_level = 'low';
+        metadata.supported_reasoning_levels = fallbackReasoningLevels(slug);
+      }
+      return { ...metadata, slug, priority: index + 1, visibility: 'list' };
+    })
   };
 }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3
+
+- Replace the clipped native model datalist in the provider editor with an accessible, searchable, keyboard-navigable list that expands inside the dialog and remains scrollable in short Webviews.
+- Show every model returned by `/models` without filtering the list by OpenAI or Claude model family.
+- Give non-GPT models exposed through a custom Responses provider the full Codex reasoning-effort picker from `low` through `ultra`.
+
 ## 1.5.2
 
 - Treat Codex model and reasoning-effort picker updates as runtime selection changes instead of external configuration drift, while continuing to protect provider, endpoint, authentication, catalog, approval, and sandbox settings.

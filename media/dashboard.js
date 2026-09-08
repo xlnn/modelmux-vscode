@@ -16,6 +16,9 @@
   let locale = 'en';
   let openMenu = null;
   let importSession = null;
+  let modelSuggestionValues = [];
+  let visibleModelSuggestions = [];
+  let activeModelSuggestion = -1;
 
   const I18N = {
     en: {
@@ -111,7 +114,8 @@
       importComplete: 'Imported {count} provider(s).', previewOpened: 'Configuration diff opened.',
       testSucceeded: 'Connection succeeded{latency}.', testFailed: 'Connection test failed.', latency: ' in {ms} ms',
       clearedCancelled: 'Secret was not cleared.', deleteCancelled: 'Provider was not deleted.',
-      showApiKey: 'Show API Key', hideApiKey: 'Hide API Key'
+      showApiKey: 'Show API Key', hideApiKey: 'Hide API Key', showModelSuggestions: 'Show model suggestions',
+      hideModelSuggestions: 'Hide model suggestions', modelSuggestions: 'Model suggestions', noMatchingModels: 'No matching models'
     },
     'zh-CN': {
       requestTimeout: '操作超时，请重试。', brandTagline: '面向 AI CLI 的 Provider 工作台', settings: '设置', addProvider: '添加 Provider', tools: '工具',
@@ -183,7 +187,8 @@
       importCredentialsWarning: '密钥不会随文件导入；请在本机重新填写密钥或设置环境变量。', conflictStrategy: '冲突处理策略',
       skipConflicts: '跳过冲突 Provider', replaceConflicts: '替换冲突 Provider', importComplete: '已导入 {count} 个 Provider。', previewOpened: '已打开配置差异对比。',
       testSucceeded: '连接成功{latency}。', testFailed: '连接测试失败。',
-      latency: '，耗时 {ms} 毫秒', clearedCancelled: '未清除密钥。', deleteCancelled: '未删除 Provider。', showApiKey: '显示 API Key', hideApiKey: '隐藏 API Key'
+      latency: '，耗时 {ms} 毫秒', clearedCancelled: '未清除密钥。', deleteCancelled: '未删除 Provider。', showApiKey: '显示 API Key', hideApiKey: '隐藏 API Key',
+      showModelSuggestions: '显示模型候选项', hideModelSuggestions: '隐藏模型候选项', modelSuggestions: '模型候选项', noMatchingModels: '没有匹配的模型'
     }
   };
 
@@ -380,6 +385,12 @@
     return ['customResponses', 'customChat', 'customAnthropic'].includes(kind);
   }
 
+  function uniqueModelIds(models) {
+    const unique = Array.from(new Set((Array.isArray(models) ? models : [])
+      .map(model => String(model || '').trim()).filter(Boolean)));
+    return unique;
+  }
+
   function compatibilityReason(profile) {
     if (profile.unsupportedCode === 'auth') return t('unsupportedAuth');
     if (profile.unsupportedCode === 'kind') return t('unsupportedKind', { target: state.targetLabel, kind: kindLabel(profile.kind) });
@@ -487,7 +498,7 @@
 
   function modelSelect(profile) {
     const select = create('select', { 'aria-label': t('modelAria', { name: profile.name }) });
-    const models = Array.isArray(profile.models) ? profile.models.slice() : [];
+    const models = uniqueModelIds(profile.models);
     if (profile.selectedModel && !models.includes(profile.selectedModel)) models.unshift(profile.selectedModel);
     if (!models.length) {
       select.append(create('option', { value: '', text: t('noModels') }));
@@ -622,7 +633,7 @@
     const summary = [
       kindLabel(profile.kind), endpointLabel(profile),
       profile.activeTargetId && profile.activeTargetId !== state.selectedTargetId ? targetName(profile.activeTargetId) : '',
-      t('modelsAvailable', { count: (profile.models || []).length })
+      t('modelsAvailable', { count: uniqueModelIds(profile.models).length })
     ].filter(Boolean).join(' · ');
     const badges = create('span', { className: 'provider-badges' });
     if (profile.active) badges.append(create('span', { className: 'provider-badge active', text: t('active') }));
@@ -819,8 +830,101 @@
     if ((bedrock || local) && (!$('reasoningPolicy').value || $('reasoningPolicy').value === 'auto')) $('reasoningPolicy').value = 'none';
   }
 
+  function updateModelSuggestionToggle() {
+    const expanded = $('selectedModel').getAttribute('aria-expanded') === 'true';
+    const button = $('modelSuggestionsToggle');
+    button.title = t(expanded ? 'hideModelSuggestions' : 'showModelSuggestions');
+    button.setAttribute('aria-label', button.title);
+    button.querySelector('.codicon').className = `codicon codicon-chevron-${expanded ? 'up' : 'down'}`;
+  }
+
+  function setActiveModelSuggestion(index) {
+    if (!visibleModelSuggestions.length) {
+      activeModelSuggestion = -1;
+      $('selectedModel').removeAttribute('aria-activedescendant');
+      return;
+    }
+    activeModelSuggestion = (index + visibleModelSuggestions.length) % visibleModelSuggestions.length;
+    $('modelSuggestions').querySelectorAll('.model-suggestion').forEach((node, nodeIndex) => {
+      const active = nodeIndex === activeModelSuggestion;
+      node.classList.toggle('active', active);
+      node.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (active) {
+        $('selectedModel').setAttribute('aria-activedescendant', node.id);
+        node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    });
+  }
+
+  function chooseModelSuggestion(model) {
+    $('selectedModel').value = model;
+    $('selectedModel').removeAttribute('aria-invalid');
+    $('selectedModelError').textContent = '';
+    closeModelSuggestions();
+    $('selectedModel').focus({ preventScroll: true });
+  }
+
+  function renderModelSuggestions(query = '') {
+    const normalizedQuery = String(query || '').trim().toLowerCase();
+    visibleModelSuggestions = normalizedQuery
+      ? modelSuggestionValues.filter(model => model.toLowerCase().includes(normalizedQuery))
+      : modelSuggestionValues.slice();
+    activeModelSuggestion = -1;
+    $('selectedModel').removeAttribute('aria-activedescendant');
+    const nodes = visibleModelSuggestions.map((model, index) => {
+      const option = create('button', {
+        id: `model-suggestion-${index}`, className: 'model-suggestion', type: 'button', role: 'option',
+        'aria-selected': 'false', text: model, title: model
+      });
+      option.addEventListener('mousedown', event => event.preventDefault());
+      option.addEventListener('click', () => chooseModelSuggestion(model));
+      return option;
+    });
+    if (!nodes.length) nodes.push(create('div', { className: 'model-suggestions-empty', text: t('noMatchingModels') }));
+    $('modelSuggestions').replaceChildren(...nodes);
+  }
+
+  function openModelSuggestions(query = '') {
+    renderModelSuggestions(query);
+    $('modelSuggestions').hidden = false;
+    $('selectedModel').setAttribute('aria-expanded', 'true');
+    updateModelSuggestionToggle();
+    window.requestAnimationFrame(() => $('modelSuggestions').scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+  }
+
+  function closeModelSuggestions() {
+    $('modelSuggestions').hidden = true;
+    $('selectedModel').setAttribute('aria-expanded', 'false');
+    $('selectedModel').removeAttribute('aria-activedescendant');
+    visibleModelSuggestions = [];
+    activeModelSuggestion = -1;
+    updateModelSuggestionToggle();
+  }
+
   function updateModelSuggestions(models) {
-    $('modelSuggestions').replaceChildren(...models.map(model => create('option', { value: model })));
+    modelSuggestionValues = uniqueModelIds(models);
+    if ($('selectedModel').getAttribute('aria-expanded') === 'true') openModelSuggestions();
+  }
+
+  function handleModelSuggestionKeydown(event) {
+    const expanded = $('selectedModel').getAttribute('aria-expanded') === 'true';
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!expanded) openModelSuggestions();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = activeModelSuggestion < 0
+        ? (direction > 0 ? 0 : visibleModelSuggestions.length - 1)
+        : activeModelSuggestion + direction;
+      setActiveModelSuggestion(nextIndex);
+    } else if (event.key === 'Enter' && expanded && activeModelSuggestion >= 0) {
+      event.preventDefault();
+      chooseModelSuggestion(visibleModelSuggestions[activeModelSuggestion]);
+    } else if (event.key === 'Escape' && expanded) {
+      event.preventDefault();
+      closeModelSuggestions();
+    } else if (event.key === 'Tab') {
+      closeModelSuggestions();
+    }
   }
 
   function clearFormErrors() {
@@ -862,11 +966,13 @@
     setValue('envHttpHeaders', profile && profile.envHttpHeaders ? JSON.stringify(profile.envHttpHeaders, null, 2) : '');
     setValue('awsRegion', profile && profile.awsRegion || 'us-east-1');
     setValue('awsProfile', profile && profile.awsProfile || '');
-    setValue('selectedModel', profile && profile.selectedModel || '');
-    setValue('models', profile && Array.isArray(profile.models) ? profile.models.join('\n') : '');
+    const profileModels = uniqueModelIds(profile && profile.models || []);
+    setValue('selectedModel', profile && profile.selectedModel || profileModels[0] || '');
+    setValue('models', profileModels.join('\n'));
     setValue('reasoningPolicy', profile && profile.reasoningPolicy || (profile && ['bedrock', 'ollama', 'lmstudio'].includes(profile.kind) ? 'none' : 'auto'));
     $('fetchResult').textContent = '';
-    updateModelSuggestions(profile && profile.models || []);
+    closeModelSuggestions();
+    updateModelSuggestions(profileModels);
     updateDialogFields();
     showDialog($('profileDialog'), $('name'), returnFocus);
   }
@@ -876,6 +982,7 @@
     closeDialogElement($('profileDialog'), announcement);
     editingProfile = null;
     $('apiKey').value = '';
+    closeModelSuggestions();
     clearFormErrors();
   }
 
@@ -1016,7 +1123,7 @@
     $('fetchResult').textContent = t('connecting');
     try {
       const result = await busy(button, () => request('fetchModels', { profile: formProfile(), apiKey: $('apiKey').value }), $('profileForm'));
-      const models = Array.isArray(result.models) ? result.models : [];
+      const models = uniqueModelIds(result.models);
       $('models').value = models.join('\n');
       if (!$('selectedModel').value || !models.includes($('selectedModel').value)) $('selectedModel').value = models[0] || '';
       updateModelSuggestions(models);
@@ -1266,6 +1373,9 @@
     if (kind === 'customAnthropic' && (!$('envKey').value || $('envKey').value === 'MODEL_SWITCH_API_KEY')) $('envKey').value = 'ANTHROPIC_API_KEY';
     if (['customChat', 'customAnthropic'].includes(kind) && $('authMode').value === 'secret') $('authMode').value = 'env';
     if (!editingProfile) $('name').value = kindLabel(kind);
+    const models = $('models').value.split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
+    updateModelSuggestions(models);
+    closeModelSuggestions();
     updateDialogFields();
   });
   $('authMode').addEventListener('change', updateDialogFields);
@@ -1279,6 +1389,23 @@
     event.target.removeAttribute('aria-invalid');
     const errorNode = document.querySelector(`[data-field-error="${CSS.escape(field)}"]`);
     if (errorNode) errorNode.textContent = '';
+  });
+  $('selectedModel').addEventListener('focus', () => openModelSuggestions());
+  $('selectedModel').addEventListener('click', () => openModelSuggestions());
+  $('selectedModel').addEventListener('input', event => openModelSuggestions(event.target.value));
+  $('selectedModel').addEventListener('keydown', handleModelSuggestionKeydown);
+  $('modelSuggestionsToggle').addEventListener('click', () => {
+    if ($('selectedModel').getAttribute('aria-expanded') === 'true') closeModelSuggestions();
+    else {
+      $('selectedModel').focus({ preventScroll: true });
+      openModelSuggestions();
+    }
+  });
+  $('models').addEventListener('input', event => {
+    updateModelSuggestions(event.target.value.split(/[\n,]+/).map(value => value.trim()).filter(Boolean));
+  });
+  document.addEventListener('pointerdown', event => {
+    if (!$('modelCombobox').contains(event.target)) closeModelSuggestions();
   });
   $('profileForm').addEventListener('submit', event => {
     event.preventDefault();

@@ -282,11 +282,16 @@
         <section class="form-section" aria-labelledby="modelsTitle">
           <header><h3 id="modelsTitle" data-i18n="models">Models</h3><p data-i18n="modelsNote">Choose a default model or synchronize from /models.</p></header>
           <div class="form-grid">
-            <label class="field full"><span data-i18n="modelId">Model ID</span>
-              <input id="selectedModel" list="modelSuggestions" required placeholder="Enter a model ID accepted by the target CLI" data-i18n-placeholder="modelIdPlaceholder" aria-errormessage="selectedModelError">
-              <datalist id="modelSuggestions"></datalist>
+            <div class="field full"><label for="selectedModel" data-i18n="modelId">Model ID</label>
+              <div id="modelCombobox" class="model-combobox">
+                <div class="model-combobox-control">
+                  <input id="selectedModel" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="modelSuggestions" autocomplete="off" required placeholder="Enter a model ID accepted by the target CLI" data-i18n-placeholder="modelIdPlaceholder" aria-errormessage="selectedModelError">
+                  <button type="button" id="modelSuggestionsToggle" class="icon-button" aria-label="Show model suggestions" title="Show model suggestions" data-i18n-aria="showModelSuggestions" data-i18n-title="showModelSuggestions"><span class="codicon codicon-chevron-down" aria-hidden="true"></span></button>
+                </div>
+                <div id="modelSuggestions" class="model-suggestions" role="listbox" aria-label="Model suggestions" data-i18n-aria="modelSuggestions" hidden></div>
+              </div>
               <span id="selectedModelError" class="field-error" data-field-error="selectedModel"></span>
-            </label>
+            </div>
             <label class="field full"><span data-i18n="availableModels">Available models</span><textarea id="models" rows="5" placeholder="One model ID per line" data-i18n-placeholder="availableModelsPlaceholder"></textarea></label>
           </div>
           <div id="fetchRow" class="inline-actions" role="status">
