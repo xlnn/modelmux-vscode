@@ -537,6 +537,7 @@ function profileProtocol(profile) {
 function targetCompatibility(targetId, profile) {
   const kind = profile && profile.kind;
   const custom = isCustomProfile(profile);
+  const authMode = profile && profile.authMode === 'bearer' ? 'secret' : profile && profile.authMode;
   if (custom) {
     try {
       validateProviderId(profile.providerId);
@@ -546,8 +547,9 @@ function targetCompatibility(targetId, profile) {
     }
     catch (error) { return { supported: false, code: 'profile', reason: error.message || String(error) }; }
   }
-  if (custom && targetId !== 'codex' && !['env', 'none'].includes(profile.authMode)) {
-    return { supported: false, code: 'auth', reason: '该 CLI 仅支持环境变量认证或无认证；编辑 Provider 后再启用。' };
+  const directAnthropic = custom && kind === 'customAnthropic' && authMode === 'secret';
+  if (custom && targetId !== 'codex' && !['env', 'none'].includes(authMode) && !directAnthropic) {
+    return { supported: false, code: 'auth', reason: '该 CLI 仅支持环境变量认证或 Anthropic Messages 的直接密钥/无认证；编辑 Provider 后再启用。' };
   }
   const supportedKinds = {
     codex: ['customResponses', 'openai', 'bedrock', 'ollama', 'lmstudio'],
@@ -561,7 +563,8 @@ function targetCompatibility(targetId, profile) {
   if (!(supportedKinds[targetId] || []).includes(kind)) {
     return { supported: false, code: 'kind', reason: `${targetLabel(targetId)} 不支持 ${kindLabel(kind)} 配置。` };
   }
-  if (targetId === 'claude' && custom && !['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(profile.envKey)) {
+  if (targetId === 'claude' && custom && authMode === 'env'
+    && !['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(profile.envKey)) {
     return { supported: false, code: 'claudeEnv', reason: 'Claude Code 自定义网关的环境变量名必须是 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN。' };
   }
   return { supported: true, reason: '' };
@@ -2042,21 +2045,30 @@ function nativeProviderId(targetId, kind) {
   return maps[targetId] && maps[targetId][kind];
 }
 
-function environmentApiKey(profile) {
-  if (!profile || profile.authMode === 'none') return undefined;
-  if (profile.authMode !== 'env') throw new Error('该 CLI 的自定义 Provider 仅支持环境变量认证或无认证。');
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(profile.envKey || '')) throw new Error('请为 Provider 配置有效的 API Key 环境变量名。');
-  return profile.envKey;
+function externalProviderCredential(profile, resolvedSecret) {
+  const authMode = profile && profile.authMode === 'bearer' ? 'secret' : profile && profile.authMode;
+  if (!profile || authMode === 'none') return {};
+  if (authMode === 'env') {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(profile.envKey || '')) throw new Error('请为 Provider 配置有效的 API Key 环境变量名。');
+    return { envKey: profile.envKey };
+  }
+  if (authMode === 'secret' && profile.kind === 'customAnthropic') {
+    const apiKey = String(resolvedSecret || '').trim();
+    if (!apiKey) throw new Error('Anthropic Messages 直接密钥模式缺少 API Key，请重新保存 Provider。');
+    return { apiKey };
+  }
+  throw new Error('该 CLI 的自定义 Provider 仅支持环境变量认证、Anthropic Messages 直接密钥或无认证。');
 }
 
-function buildClaudeConfig(profile, model, original) {
+function buildClaudeConfig(profile, model, original, resolvedSecret) {
   const config = parseJsonObject(original, 'Claude Code settings.json');
   config.model = model;
   if (profile.kind === 'customAnthropic') {
     config.env = config.env && typeof config.env === 'object' && !Array.isArray(config.env) ? config.env : {};
     config.env.ANTHROPIC_BASE_URL = normalizeBaseUrl(profile.baseUrl);
     config.env.ANTHROPIC_MODEL = model;
-    environmentApiKey(profile);
+    const credential = externalProviderCredential(profile, resolvedSecret);
+    if (credential.apiKey) config.env.ANTHROPIC_API_KEY = credential.apiKey;
   }
   return `${JSON.stringify(config, null, 2)}\n`;
 }
@@ -2095,13 +2107,14 @@ function buildGrokConfig(model, original) {
   return `${lines.join('\n').replace(/\n+$/, '')}\n`;
 }
 
-function buildOpenCodeConfig(profile, model, original) {
+function buildOpenCodeConfig(profile, model, original, resolvedSecret) {
   let content = String(original || '').trim() ? String(original) : '{}\n';
   if (isCustomProfile(profile)) {
-    const envKey = environmentApiKey(profile);
+    const credential = externalProviderCredential(profile, resolvedSecret);
     const npmPackage = profile.kind === 'customAnthropic' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible';
     const options = { baseURL: normalizeBaseUrl(profile.baseUrl) };
-    if (envKey) options.apiKey = `{env:${envKey}}`;
+    if (credential.envKey) options.apiKey = `{env:${credential.envKey}}`;
+    else if (credential.apiKey) options.apiKey = credential.apiKey;
     if (Object.keys(normalizeStringMap(profile.httpHeaders)).length) options.headers = normalizeStringMap(profile.httpHeaders);
     const provider = {
       npm: npmPackage,
@@ -2118,7 +2131,7 @@ function buildOpenCodeConfig(profile, model, original) {
   return content.endsWith('\n') ? content : `${content}\n`;
 }
 
-function buildOpenClawConfig(profile, model, original) {
+function buildOpenClawConfig(profile, model, original, resolvedSecret) {
   const config = parseJsonObject(original, 'OpenClaw openclaw.json', true);
   config.agents = config.agents && typeof config.agents === 'object' && !Array.isArray(config.agents) ? config.agents : {};
   config.agents.defaults = config.agents.defaults && typeof config.agents.defaults === 'object' && !Array.isArray(config.agents.defaults) ? config.agents.defaults : {};
@@ -2128,7 +2141,7 @@ function buildOpenClawConfig(profile, model, original) {
   let providerId = nativeProviderId('openclaw', profile.kind);
   if (isCustomProfile(profile)) {
     providerId = profile.providerId;
-    const envKey = environmentApiKey(profile);
+    const credential = externalProviderCredential(profile, resolvedSecret);
     config.models = config.models && typeof config.models === 'object' && !Array.isArray(config.models) ? config.models : {};
     config.models.mode = 'merge';
     config.models.providers = config.models.providers && typeof config.models.providers === 'object'
@@ -2139,14 +2152,15 @@ function buildOpenClawConfig(profile, model, original) {
         : profile.kind === 'customAnthropic' ? 'anthropic-messages' : 'openai-completions',
       models: (profile.models || [model]).map(id => ({ id, name: id }))
     };
-    if (envKey) provider.apiKey = { source: 'env', provider: 'default', id: envKey };
+    if (credential.envKey) provider.apiKey = { source: 'env', provider: 'default', id: credential.envKey };
+    else if (credential.apiKey) provider.apiKey = credential.apiKey;
     config.models.providers[providerId] = provider;
   }
   config.agents.defaults.model.primary = `${providerId}/${model}`;
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
-function buildHermesConfig(profile, model, original) {
+function buildHermesConfig(profile, model, original, resolvedSecret) {
   let document;
   try { document = YAML.parseDocument(String(original || '').trim() ? String(original) : '{}\n'); }
   catch (error) { throw new Error(`Hermes config.yaml 不是有效 YAML：${error.message || error}`); }
@@ -2154,14 +2168,15 @@ function buildHermesConfig(profile, model, original) {
   let providerId = nativeProviderId('hermes', profile.kind);
   if (isCustomProfile(profile)) {
     providerId = profile.providerId;
-    const envKey = environmentApiKey(profile);
+    const credential = externalProviderCredential(profile, resolvedSecret);
     const provider = {
       api: normalizeBaseUrl(profile.baseUrl),
       transport: profile.kind === 'customResponses' ? 'codex_responses'
         : profile.kind === 'customAnthropic' ? 'anthropic_messages' : 'chat_completions',
       models: Object.fromEntries((profile.models || [model]).map(id => [id, {}]))
     };
-    if (envKey) provider.key_env = envKey;
+    if (credential.envKey) provider.key_env = credential.envKey;
+    else if (credential.apiKey) provider.key = credential.apiKey;
     document.setIn(['providers', providerId], provider);
     providerId = `custom:${providerId}`;
   }
@@ -2170,13 +2185,13 @@ function buildHermesConfig(profile, model, original) {
   return document.toString({ lineWidth: 0 });
 }
 
-function buildTargetConfig(targetId, profile, model, original) {
-  if (targetId === 'claude') return buildClaudeConfig(profile, model, original);
+function buildTargetConfig(targetId, profile, model, original, resolvedSecret) {
+  if (targetId === 'claude') return buildClaudeConfig(profile, model, original, resolvedSecret);
   if (targetId === 'gemini') return buildGeminiConfig(model, original);
   if (targetId === 'grok') return buildGrokConfig(model, original);
-  if (targetId === 'opencode') return buildOpenCodeConfig(profile, model, original);
-  if (targetId === 'openclaw') return buildOpenClawConfig(profile, model, original);
-  if (targetId === 'hermes') return buildHermesConfig(profile, model, original);
+  if (targetId === 'opencode') return buildOpenCodeConfig(profile, model, original, resolvedSecret);
+  if (targetId === 'openclaw') return buildOpenClawConfig(profile, model, original, resolvedSecret);
+  if (targetId === 'hermes') return buildHermesConfig(profile, model, original, resolvedSecret);
   throw new Error(`没有 ${targetLabel(targetId)} 配置生成器。`);
 }
 
@@ -2186,6 +2201,13 @@ async function activateExternalTarget(context, targetId, profile, model) {
   const files = pathsForTarget(targetId);
   const management = await assertTargetCanApply(context, targetId, files, true);
   if (!management) return false;
+  const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+  let resolvedSecret;
+  if (isCustomProfile(profile) && authMode === 'secret') {
+    resolvedSecret = await context.secrets.get(profileSecretKey(context, profile.id));
+    if (!resolvedSecret) resolvedSecret = await promptForApiKey(context, profile, false);
+    if (!resolvedSecret) return false;
+  }
   const configSnapshot = await readRegularFileSnapshot(files.config);
   assertSnapshotMatches(files.config, configSnapshot, management);
   const backupSnapshot = await readRegularFileSnapshot(files.backup);
@@ -2201,7 +2223,7 @@ async function activateExternalTarget(context, targetId, profile, model) {
     createdBackup = await ensureOriginalBackup(files, configSnapshot);
     await assertTargetSnapshotUnchanged(management, files);
     const original = await originalContentForTarget(files);
-    const content = buildTargetConfig(targetId, profile, model, original);
+    const content = buildTargetConfig(targetId, profile, model, original, resolvedSecret);
     writtenContent = content;
     await writeAtomic(files.config, content, management);
     configWritten = true;
@@ -2553,7 +2575,9 @@ async function promptForApiKey(context, profile, allowKeepExisting = true, optio
     title: `${profile.name}：API Key`,
     prompt: existing && allowKeepExisting
       ? '已保存密钥。留空并确认可保留原密钥；输入新值可替换。'
-      : '请输入 Bearer API Key。密钥保存在 VS Code SecretStorage，不写入 config.toml。',
+      : profile.kind === 'customAnthropic'
+        ? '请输入 API Key。密钥保存在 VS Code SecretStorage；启用外部 CLI 时会复制到该 CLI 的受保护托管配置。'
+        : '请输入 Bearer API Key。密钥保存在 VS Code SecretStorage；Codex 启用时仅写入受保护的运行时认证位置。',
     password: true,
     ignoreFocusOut: true
   });
@@ -2613,7 +2637,7 @@ async function chooseInitialModel(context, profile, currentModel, apiKeyOverride
 
 async function createCustomProfile(context, existing, requestedKind = 'customResponses') {
   const profile = existing ? { ...existing } : {
-    id: createId(), kind: requestedKind, authMode: requestedKind === 'customResponses' ? 'secret' : 'env', reasoningPolicy: 'auto',
+    id: createId(), kind: requestedKind, authMode: ['customResponses', 'customAnthropic'].includes(requestedKind) ? 'secret' : 'env', reasoningPolicy: 'auto',
     models: [], requestMaxRetries: 0, streamMaxRetries: 2, streamIdleTimeoutMs: 300000,
     modelDiscoveryPath: '/models'
   };
@@ -2639,13 +2663,26 @@ async function createCustomProfile(context, existing, requestedKind = 'customRes
   }
 
   let authChoices = [
-    { label: '$(symbol-variable) Bearer 环境变量', description: 'Codex 通过 env_key 读取，适合服务器、CI 与多平台', value: 'env' },
+    {
+      label: profile.kind === 'customAnthropic' ? '$(symbol-variable) API Key 环境变量' : '$(symbol-variable) Bearer 环境变量',
+      description: profile.kind === 'customAnthropic'
+        ? '目标 CLI 从启动环境读取变量，适合服务器、CI 与共享设备'
+        : 'Codex 通过 env_key 读取，适合服务器、CI 与多平台',
+      value: 'env'
+    },
     { label: '$(list-filter) 环境变量请求头', description: '通过 env_http_headers 适配 api-key 等非 Bearer 认证', value: 'envHeaders' },
     { label: '$(unlock) 无认证', description: '仅适用于可信本地或内网服务', value: 'none' }
   ];
-  if (profile.kind === 'customResponses') {
-    authChoices.unshift({ label: '$(key) SecretStorage / Windows 兼容认证', description: 'Linux/macOS 使用 token helper；Windows 写入受 ACL 保护的托管配置', value: 'secret' });
-  } else authChoices = authChoices.filter(item => item.value !== 'envHeaders');
+  if (['customResponses', 'customAnthropic'].includes(profile.kind)) {
+    authChoices.unshift({
+      label: '$(key) SecretStorage 直接密钥',
+      description: profile.kind === 'customAnthropic'
+        ? '启用时写入目标 CLI 的受保护托管配置'
+        : 'Linux/macOS 使用 token helper；Windows 写入受 ACL 保护的托管配置',
+      value: 'secret'
+    });
+  }
+  if (profile.kind !== 'customResponses') authChoices = authChoices.filter(item => item.value !== 'envHeaders');
   const authChoice = await vscode.window.showQuickPick(authChoices, { title: '认证方式', ignoreFocusOut: true });
   if (!authChoice) return undefined;
   profile.authMode = authChoice.value;
@@ -2800,7 +2837,7 @@ async function addProfile(context, statusBar) {
   const type = await vscode.window.showQuickPick([
     { label: '$(server) 自定义 OpenAI Responses Provider', description: '适用于 Codex、OpenClaw 与 Hermes', value: 'customResponses' },
     { label: '$(server) 自定义 OpenAI Chat Provider', description: '适用于 OpenCode、OpenClaw 与 Hermes', value: 'customChat' },
-    { label: '$(server) 自定义 Anthropic Messages Provider', description: '适用于 Claude Code、OpenClaw 与 Hermes', value: 'customAnthropic' },
+    { label: '$(server) 自定义 Anthropic Messages Provider', description: '适用于 Claude Code、OpenCode、OpenClaw 与 Hermes', value: 'customAnthropic' },
     { label: '$(account) OpenAI 官方', description: '使用 Codex 当前官方登录状态', value: 'openai' },
     { label: '$(account) Anthropic 官方', description: '使用 Claude Code 或其它 CLI 的现有凭据', value: 'anthropic' },
     { label: '$(account) Google Gemini 官方', description: '使用 Gemini CLI 或其它 CLI 的现有凭据', value: 'gemini' },
@@ -2859,7 +2896,8 @@ function providerDescription(profile) {
   if (profile.kind === 'ollama') return 'Ollama 本地 Provider';
   if (profile.kind === 'lmstudio') return 'LM Studio 本地 Provider';
   if (profile.kind === 'bedrock') return `Amazon Bedrock · ${profile.awsRegion || '未设置区域'}`;
-  const auth = profile.authMode === 'env' ? `Bearer env:${profile.envKey || '?'}`
+  const auth = profile.authMode === 'env'
+    ? `${profile.kind === 'customAnthropic' ? 'API Key' : 'Bearer'} env:${profile.envKey || '?'}`
     : profile.authMode === 'envHeaders' ? '环境变量请求头'
       : profile.authMode === 'none' ? '无认证' : 'SecretStorage';
   return `${profile.providerId} · ${profile.baseUrl} · ${auth}`;
@@ -3409,7 +3447,7 @@ async function clearApiKey(context, statusBar) {
   const profile = await chooseProfile(
     context,
     '选择要清除 API Key 的配置',
-    item => item.kind === 'customResponses' && ['secret', 'bearer'].includes(item.authMode)
+    item => isCustomProfile(item) && ['secret', 'bearer'].includes(item.authMode)
   );
   if (!profile) return;
   await withProfileMutation(profile.id, async () => {
@@ -3462,9 +3500,9 @@ async function showStatus(context) {
   const profileLines = [];
   for (const profile of profiles) {
     const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
-    const hasSecret = profile.kind === 'customResponses' && authMode === 'secret'
+    const hasSecret = isCustomProfile(profile) && authMode === 'secret'
       ? Boolean(await context.secrets.get(profileSecretKey(context, profile.id))) : false;
-    const authText = profile.kind !== 'customResponses' ? '内置/外部凭据'
+    const authText = !isCustomProfile(profile) ? '内置/外部凭据'
       : authMode === 'secret' ? (hasSecret ? 'SecretStorage 已保存' : 'SecretStorage 缺失')
         : authMode === 'env' ? `${profile.envKey || '环境变量未设置名称'}：${process.env[profile.envKey] ? '当前进程可见' : '当前进程不可见'}`
           : authMode === 'envHeaders' ? `环境变量请求头：${Object.values(normalizeStringMap(profile.envHttpHeaders)).every(name => process.env[name]) ? '当前进程可见' : '存在缺失变量'}`
@@ -3838,7 +3876,16 @@ async function collectTargetDiagnostics(context, targetId) {
   if (active && profile) {
     const compatibility = targetCompatibility(normalizedTarget, profile);
     add('Provider 兼容性', compatibility.supported, compatibility.supported ? kindLabel(profile.kind) : compatibility.reason);
-    if (isCustomProfile(profile) && profile.authMode === 'env') {
+    const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+    if (isCustomProfile(profile) && authMode === 'secret') {
+      const secret = await context.secrets.get(profileSecretKey(context, profile.id));
+      add('SecretStorage 密钥', Boolean(secret), secret ? '已保存（内容未显示）' : '缺失');
+      if (profile.kind === 'customAnthropic' && configExists) {
+        const current = await fs.promises.readFile(files.config, 'utf8');
+        add('直接密钥托管配置', Boolean(secret) && current.includes(String(secret)),
+          secret && current.includes(String(secret)) ? '已写入受保护的活动配置（内容未显示）' : '活动配置与 SecretStorage 不一致');
+      }
+    } else if (isCustomProfile(profile) && authMode === 'env') {
       add('认证环境变量', Boolean(process.env[profile.envKey]), process.env[profile.envKey] ? `${profile.envKey} 当前可见` : `${profile.envKey} 当前进程不可见`);
     }
   }
@@ -4107,7 +4154,10 @@ async function proposedTargetContent(context, targetId, profile, model) {
   const original = originalState
     ? await originalContentForTarget(files)
     : await readConfigText(files.config);
-  return buildTargetConfig(targetId, profile, model, original);
+  const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+  const placeholder = isCustomProfile(profile) && authMode === 'secret'
+    ? redactedPreviewSecret() : undefined;
+  return buildTargetConfig(targetId, profile, model, original, placeholder);
 }
 
 async function showContentDiff(targetId, before, after, title) {
@@ -4331,8 +4381,14 @@ function normalizeProfileFromGui(input, existing) {
     }
     const rawAuth = input.authMode === 'bearer' ? 'secret' : input.authMode;
     profile.authMode = ['secret', 'env', 'envHeaders', 'none'].includes(rawAuth) ? rawAuth : 'secret';
-    if (kind !== 'customResponses' && !['env', 'none'].includes(profile.authMode)) {
-      throw new Error(uiText(`${kindLabel(kind)} only supports environment-variable authentication or no authentication.`, `${kindLabel(kind)}仅支持环境变量认证或无认证。`));
+    const supportedAuthModes = kind === 'customResponses'
+      ? ['secret', 'env', 'envHeaders', 'none']
+      : kind === 'customAnthropic' ? ['secret', 'env', 'none'] : ['env', 'none'];
+    if (!supportedAuthModes.includes(profile.authMode)) {
+      throw new Error(uiText(
+        `${kindLabel(kind)} does not support the selected authentication mode.`,
+        `${kindLabel(kind)}不支持所选认证方式。`
+      ));
     }
     profile.envKey = String(input.envKey || '').trim();
     profile.envKeyInstructions = String(input.envKeyInstructions || '').trim();
@@ -4983,6 +5039,7 @@ module.exports = {
     pathsForTarget,
     targetCompatibility,
     buildTargetConfig,
+    proposedTargetContent,
     activateExternalTarget,
     restoreExternalTarget,
     getActiveTargets,

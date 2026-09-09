@@ -42,7 +42,7 @@
       kindGemini: 'Official Google Gemini', kindGrok: 'Official xAI Grok', kindOllama: 'Local Ollama', kindLmStudio: 'Local LM Studio',
       profileName: 'Profile name', profileNamePlaceholder: 'Example: Lab gateway',
       connectionAuth: 'Connection & authentication', connectionAuthNote: 'Use SecretStorage, environment variables, or no authentication.',
-      authMode: 'Authentication', authSecret: 'SecretStorage / Windows compatibility', authEnv: 'Bearer environment variable',
+      authMode: 'Authentication', authSecret: 'API Key in SecretStorage', authEnv: 'Bearer environment variable',
       authEnvHeaders: 'Environment-variable headers', authNone: 'No authentication',
       baseUrlNote: 'Usually ends at /v1; do not include the request path.', apiKeyPlaceholder: 'Leave blank to keep the saved secret',
       toggleApiKey: 'Show or hide API Key', apiKeyNote: 'Stored in VS Code SecretStorage. Secrets are never exported.',
@@ -131,7 +131,7 @@
       kindCustomAnthropic: 'Anthropic Messages 网关', kindOpenAi: 'OpenAI 官方', kindAnthropic: 'Anthropic 官方', kindGemini: 'Google Gemini 官方',
       kindGrok: 'xAI Grok 官方', kindOllama: 'Ollama 本地', kindLmStudio: 'LM Studio 本地', profileName: '配置名称',
       profileNamePlaceholder: '例如：实验室网关', connectionAuth: '连接与认证', connectionAuthNote: '支持 SecretStorage、环境变量和无认证模式。',
-      authMode: '认证方式', authSecret: 'SecretStorage / Windows 兼容认证', authEnv: 'Bearer 环境变量', authEnvHeaders: '环境变量请求头',
+      authMode: '认证方式', authSecret: 'SecretStorage 中的 API Key', authEnv: 'Bearer 环境变量', authEnvHeaders: '环境变量请求头',
       authNone: '无认证', baseUrlNote: '通常填写到 /v1，不要包含具体请求路径。', apiKeyPlaceholder: '留空表示保留已保存的密钥',
       toggleApiKey: '显示或隐藏 API Key', apiKeyNote: '保存在 VS Code SecretStorage；密钥不会被导出。', envKey: 'API Key 环境变量名',
       envKeyNote: '目标 CLI 从它的启动环境读取该变量。', envHint: '环境变量配置提示（可选）', envHintPlaceholder: '请设置 MODEL_SWITCH_API_KEY',
@@ -385,9 +385,30 @@
     return ['customResponses', 'customChat', 'customAnthropic'].includes(kind);
   }
 
+  function authModesForCustomKind(kind) {
+    if (kind === 'customResponses') return ['secret', 'env', 'envHeaders', 'none'];
+    if (kind === 'customAnthropic') return ['secret', 'env', 'none'];
+    if (kind === 'customChat') return ['env', 'none'];
+    return [];
+  }
+
   function uniqueModelIds(models) {
     const unique = Array.from(new Set((Array.isArray(models) ? models : [])
       .map(model => String(model || '').trim()).filter(Boolean)));
+    return unique;
+  }
+
+  function isClaudeModelId(model) {
+    return /(^|[./:_-])(anthropic|claude|sonnet|opus|haiku)(?=$|[./:_-]|\d)/i
+      .test(String(model || ''));
+  }
+
+  function filterModelsForProviderKind(models, kind) {
+    const unique = uniqueModelIds(models);
+    if (['customAnthropic', 'anthropic'].includes(kind)) return unique.filter(isClaudeModelId);
+    if (['customResponses', 'customChat', 'openai'].includes(kind)) {
+      return unique.filter(model => !isClaudeModelId(model));
+    }
     return unique;
   }
 
@@ -498,8 +519,9 @@
 
   function modelSelect(profile) {
     const select = create('select', { 'aria-label': t('modelAria', { name: profile.name }) });
-    const models = uniqueModelIds(profile.models);
-    if (profile.selectedModel && !models.includes(profile.selectedModel)) models.unshift(profile.selectedModel);
+    const models = filterModelsForProviderKind(profile.models, profile.kind);
+    const selectedModelMatches = filterModelsForProviderKind([profile.selectedModel], profile.kind).length > 0;
+    if (selectedModelMatches && profile.selectedModel && !models.includes(profile.selectedModel)) models.unshift(profile.selectedModel);
     if (!models.length) {
       select.append(create('option', { value: '', text: t('noModels') }));
       select.disabled = true;
@@ -633,7 +655,7 @@
     const summary = [
       kindLabel(profile.kind), endpointLabel(profile),
       profile.activeTargetId && profile.activeTargetId !== state.selectedTargetId ? targetName(profile.activeTargetId) : '',
-      t('modelsAvailable', { count: uniqueModelIds(profile.models).length })
+      t('modelsAvailable', { count: filterModelsForProviderKind(profile.models, profile.kind).length })
     ].filter(Boolean).join(' · ');
     const badges = create('span', { className: 'provider-badges' });
     if (profile.active) badges.append(create('span', { className: 'provider-badge active', text: t('active') }));
@@ -814,10 +836,10 @@
     $('customFields').classList.toggle('hidden', !custom);
     $('bedrockFields').classList.toggle('hidden', !bedrock);
     $('fetchRow').classList.toggle('hidden', !custom);
-    const responseCustom = kind === 'customResponses';
-    $('authMode').querySelector('option[value="secret"]').disabled = custom && !responseCustom;
-    $('authMode').querySelector('option[value="envHeaders"]').disabled = custom && !responseCustom;
-    if (custom && !responseCustom && !['env', 'none'].includes($('authMode').value)) $('authMode').value = 'env';
+    const allowedAuthModes = authModesForCustomKind(kind);
+    $('authMode').querySelector('option[value="secret"]').disabled = custom && !allowedAuthModes.includes('secret');
+    $('authMode').querySelector('option[value="envHeaders"]').disabled = custom && !allowedAuthModes.includes('envHeaders');
+    if (custom && !allowedAuthModes.includes($('authMode').value)) $('authMode').value = 'env';
     const authMode = $('authMode').value;
     $('apiKeyLabel').classList.toggle('hidden', !custom || authMode !== 'secret');
     $('envKeyLabel').classList.toggle('hidden', !custom || authMode !== 'env');
@@ -902,7 +924,7 @@
   }
 
   function updateModelSuggestions(models) {
-    modelSuggestionValues = uniqueModelIds(models);
+    modelSuggestionValues = filterModelsForProviderKind(models, $('kind').value);
     if ($('selectedModel').getAttribute('aria-expanded') === 'true') openModelSuggestions();
   }
 
@@ -966,8 +988,10 @@
     setValue('envHttpHeaders', profile && profile.envHttpHeaders ? JSON.stringify(profile.envHttpHeaders, null, 2) : '');
     setValue('awsRegion', profile && profile.awsRegion || 'us-east-1');
     setValue('awsProfile', profile && profile.awsProfile || '');
-    const profileModels = uniqueModelIds(profile && profile.models || []);
-    setValue('selectedModel', profile && profile.selectedModel || profileModels[0] || '');
+    const profileModels = filterModelsForProviderKind(profile && profile.models || [], kind);
+    const profileSelectedModel = filterModelsForProviderKind([profile && profile.selectedModel], kind)[0]
+      || profileModels[0] || '';
+    setValue('selectedModel', profileSelectedModel);
     setValue('models', profileModels.join('\n'));
     setValue('reasoningPolicy', profile && profile.reasoningPolicy || (profile && ['bedrock', 'ollama', 'lmstudio'].includes(profile.kind) ? 'none' : 'auto'));
     $('fetchResult').textContent = '';
@@ -1123,7 +1147,7 @@
     $('fetchResult').textContent = t('connecting');
     try {
       const result = await busy(button, () => request('fetchModels', { profile: formProfile(), apiKey: $('apiKey').value }), $('profileForm'));
-      const models = uniqueModelIds(result.models);
+      const models = filterModelsForProviderKind(result.models, $('kind').value);
       $('models').value = models.join('\n');
       if (!$('selectedModel').value || !models.includes($('selectedModel').value)) $('selectedModel').value = models[0] || '';
       updateModelSuggestions(models);
@@ -1371,10 +1395,12 @@
   $('kind').addEventListener('change', () => {
     const kind = $('kind').value;
     if (kind === 'customAnthropic' && (!$('envKey').value || $('envKey').value === 'MODEL_SWITCH_API_KEY')) $('envKey').value = 'ANTHROPIC_API_KEY';
-    if (['customChat', 'customAnthropic'].includes(kind) && $('authMode').value === 'secret') $('authMode').value = 'env';
     if (!editingProfile) $('name').value = kindLabel(kind);
     const models = $('models').value.split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
-    updateModelSuggestions(models);
+    const filteredModels = filterModelsForProviderKind(models, kind);
+    $('models').value = filteredModels.join('\n');
+    if (!filterModelsForProviderKind([$('selectedModel').value], kind).length) $('selectedModel').value = filteredModels[0] || '';
+    updateModelSuggestions(filteredModels);
     closeModelSuggestions();
     updateDialogFields();
   });

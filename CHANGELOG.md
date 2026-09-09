@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.6
+
+- Add two authentication modes for Anthropic Messages gateways: a direct API key stored in VS Code SecretStorage, or an environment-variable reference.
+- Apply direct Anthropic credentials to the managed Claude Code, OpenCode, OpenClaw, and Hermes configuration while the provider is active; restoring the original target configuration removes or replaces the managed credential.
+- Keep direct API keys out of provider exports, diagnostics, and configuration previews, and retain environment-variable mode for services and shared systems.
+
+## 1.5.5
+
+- Filter provider model choices by response format: OpenAI Responses and Chat providers show OpenAI-compatible models, while Anthropic Messages providers show Claude-compatible models.
+- Keep the response-format filter consistent across provider rows, model suggestions, editing, and `/models` refresh results so an incompatible model is not selected accidentally.
+
 ## 1.5.4
 
 - Publish the `1.5.3` provider-editor and Codex reasoning updates from a correctly versioned release commit and package them as `modelmux-1.5.4.vsix`.

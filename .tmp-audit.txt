@@ -1,0 +1,1759 @@
+media/dashboard.js-40-      kindCustomResponses: 'OpenAI Responses gateway', kindCustomChat: 'OpenAI Chat Completions gateway',
+media/dashboard.js-41-      kindCustomAnthropic: 'Anthropic Messages gateway', kindOpenAi: 'Official OpenAI', kindAnthropic: 'Official Anthropic',
+media/dashboard.js-42-      kindGemini: 'Official Google Gemini', kindGrok: 'Official xAI Grok', kindOllama: 'Local Ollama', kindLmStudio: 'Local LM Studio',
+media/dashboard.js-43-      profileName: 'Profile name', profileNamePlaceholder: 'Example: Lab gateway',
+media/dashboard.js-44-      connectionAuth: 'Connection & authentication', connectionAuthNote: 'Use SecretStorage, environment variables, or no authentication.',
+media/dashboard.js:45:      authMode: 'Authentication', authSecret: 'SecretStorage / Windows compatibility', authEnv: 'Bearer environment variable',
+media/dashboard.js-46-      authEnvHeaders: 'Environment-variable headers', authNone: 'No authentication',
+media/dashboard.js:47:      baseUrlNote: 'Usually ends at /v1; do not include the request path.', apiKeyPlaceholder: 'Leave blank to keep the saved secret',
+media/dashboard.js-48-      toggleApiKey: 'Show or hide API Key', apiKeyNote: 'Stored in VS Code SecretStorage. Secrets are never exported.',
+media/dashboard.js-49-      envKey: 'API Key environment variable', envKeyNote: 'The target CLI reads this variable from its launch environment.',
+media/dashboard.js-50-      envHint: 'Environment setup hint (optional)', envHintPlaceholder: 'Set MODEL_SWITCH_API_KEY',
+media/dashboard.js-51-      allowHttp: 'Allow remote HTTP (unsafe)', allowHttpNote: 'Remote HTTP sends credentials in clear text.',
+media/dashboard.js-52-      ignoreTls: 'Ignore TLS errors for model discovery (unsafe)', ignoreTlsNote: 'Only affects the plugin model-list request.',
+media/dashboard.js-53-      advancedCompatibility: 'Advanced compatibility', discoveryPath: 'Model discovery path',
+media/dashboard.js-54-      discoveryPathNote: 'A relative path or full same-origin URL. Default: /models.', requestRetries: 'HTTP request retries',
+media/dashboard.js-55-      streamRetries: 'Stream retries', streamTimeout: 'Stream idle timeout (ms)', websocketSupport: 'Provider supports Responses WebSocket transport',
+media/dashboard.js:56:      queryParams: 'Query parameters JSON', staticHeaders: 'Static headers JSON (no secrets)', envHeaders: 'Environment-variable headers JSON',
+media/dashboard.js-57-      envHeadersNote: 'Keys are HTTP headers; values are environment-variable names.', awsCredentials: 'AWS credentials',
+media/dashboard.js-58-      awsCredentialsNote: 'Uses the current system AWS credential chain.', awsProfile: 'AWS Profile (optional)',
+media/dashboard.js-59-      models: 'Models', modelsNote: 'Choose a default model or synchronize from /models.', modelId: 'Model ID',
+media/dashboard.js-60-      modelIdPlaceholder: 'Enter a model ID accepted by the target CLI', availableModels: 'Available models',
+media/dashboard.js-61-      availableModelsPlaceholder: 'One model ID per line', fetchModels: 'Fetch /models', compatibilityPolicy: 'Compatibility policy',
+--
+media/dashboard.js-81-      restoreUnavailable: 'The original configuration cannot be restored in the current state.', applyUnavailable: 'This provider cannot be applied in the current state.',
+media/dashboard.js-82-      editUnavailable: 'This provider cannot be edited while it is in use.', deleteUnavailable: 'This provider cannot be deleted while it is in use.',
+media/dashboard.js-83-      clearSecretUnavailable: 'This credential cannot be cleared while it is in use.', openConfigUnavailable: 'The configuration file does not exist.',
+media/dashboard.js-84-      noModels: 'No available models', modelAria: '{name} model', unsupported: 'Not compatible',
+media/dashboard.js-85-      unsupportedAuth: 'This CLI supports environment-variable authentication or no authentication for custom providers.',
+media/dashboard.js:86:      unsupportedKind: '{target} does not support {kind} profiles.', claudeEnvRequired: 'Claude Code requires ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN.',
+media/dashboard.js:87:      active: 'Active', missingSecret: 'Missing secret', secretReady: 'Secret ready', envReady: 'Environment ready', envNotReady: 'Environment unavailable',
+media/dashboard.js-88-      tlsException: 'TLS exception', regionUnset: 'Region not set', builtInProvider: '{kind} credentials', modelsAvailable: '{count} models',
+media/dashboard.js-89-      reapply: 'Reapply', activate: 'Activate', enableFor: 'Enable for {target}', selectModel: 'Select model', providerActions: 'Actions for {name}',
+media/dashboard.js-90-      edit: 'Edit', switchBeforeEdit: 'Restore or switch providers first', previewConfig: 'Preview configuration', testConnection: 'Test connection',
+media/dashboard.js:91:      syncModels: 'Sync models', clearSecret: 'Clear secret', delete: 'Delete', profileCount: '{count}', addFirstProvider: 'Add first provider',
+media/dashboard.js-92-      noProviders: 'No providers yet', noProvidersNote: 'Add an official provider or a compatible gateway.', noResults: 'No matching results',
+media/dashboard.js-93-      noResultsNote: 'Search by provider name, model ID, or endpoint.', stateRefreshed: 'Status refreshed.',
+media/dashboard.js-94-      restored: 'Restored the original {target} configuration.', connecting: 'Connecting...', modelsFetched: 'Fetched {count} models.',
+media/dashboard.js-95-      providerSaved: 'Provider saved.', providerDeleted: 'Provider deleted.', modelsSynced: 'Synchronized {count} models.',
+media/dashboard.js:96:      secretCleared: 'API key removed from SecretStorage.', activatedToast: 'Applied {model} to {target}.', operationFailed: 'Operation failed',
+media/dashboard.js-97-      defaultRestored: 'Default appearance restored.', defaultFontRestored: 'VS Code default font restored.',
+media/dashboard.js-98-      operationCancelled: 'Operation cancelled.', editCancelled: 'Provider changes discarded.', importCancelled: 'Import cancelled.',
+media/dashboard.js-99-      exportCancelled: 'Export cancelled.', importFinished: 'Import dialog closed.',
+media/dashboard.js-100-      exportFinished: 'Export dialog closed.', fixErrors: 'Fix the following fields', formHasErrors: 'Review {count} highlighted field(s).',
+media/dashboard.js-101-      requiredField: '{field} is required.', invalidProviderId: 'Use letters, numbers, underscores, or hyphens; do not start with a number.',
+--
+media/dashboard.js-107-      fieldRequestRetries: 'HTTP request retries', fieldStreamRetries: 'Stream retries', fieldStreamTimeout: 'Stream idle timeout',
+media/dashboard.js-108-      diagnosticsRunning: 'Running diagnostics...', diagnosticsIssues: '{failed} failed, {warned} warning(s), {passed} passed.',
+media/dashboard.js-109-      diagnosticsWarnings: '{warned} warning(s), {passed} passed, no failures.', diagnosticsPassed: 'All {passed} checks passed.', diagnosticsUnavailable: 'Detailed checks are not available from this extension host.',
+media/dashboard.js-110-      runAgain: 'Run again', openReport: 'Open report', reportOpened: 'Diagnostics report opened.',
+media/dashboard.js-111-      importPreview: 'Import preview', importSummary: '{added} new, {conflicts} conflict(s) from {source}.', importNoProfiles: 'No providers are available to import.',
+media/dashboard.js:112:      importCredentialsWarning: 'Credentials are not imported. Re-enter secrets or configure environment variables on this device.',
+media/dashboard.js-113-      conflictStrategy: 'Conflict strategy', skipConflicts: 'Skip conflicting providers', replaceConflicts: 'Replace conflicting providers',
+media/dashboard.js-114-      importComplete: 'Imported {count} provider(s).', previewOpened: 'Configuration diff opened.',
+media/dashboard.js-115-      testSucceeded: 'Connection succeeded{latency}.', testFailed: 'Connection test failed.', latency: ' in {ms} ms',
+media/dashboard.js-116-      clearedCancelled: 'Secret was not cleared.', deleteCancelled: 'Provider was not deleted.',
+media/dashboard.js-117-      showApiKey: 'Show API Key', hideApiKey: 'Hide API Key', showModelSuggestions: 'Show model suggestions',
+--
+media/dashboard.js-129-      resetAppearance: '恢复默认外观', openVsCodeSettings: 'VS Code 设置', basicInfo: '基本信息', basicInfoNote: '定义连接类型与便于识别的名称。',
+media/dashboard.js-130-      providerType: 'Provider 类型', kindCustomResponses: 'OpenAI Responses 网关', kindCustomChat: 'OpenAI Chat Completions 网关',
+media/dashboard.js-131-      kindCustomAnthropic: 'Anthropic Messages 网关', kindOpenAi: 'OpenAI 官方', kindAnthropic: 'Anthropic 官方', kindGemini: 'Google Gemini 官方',
+media/dashboard.js-132-      kindGrok: 'xAI Grok 官方', kindOllama: 'Ollama 本地', kindLmStudio: 'LM Studio 本地', profileName: '配置名称',
+media/dashboard.js-133-      profileNamePlaceholder: '例如：实验室网关', connectionAuth: '连接与认证', connectionAuthNote: '支持 SecretStorage、环境变量和无认证模式。',
+media/dashboard.js:134:      authMode: '认证方式', authSecret: 'SecretStorage / Windows 兼容认证', authEnv: 'Bearer 环境变量', authEnvHeaders: '环境变量请求头',
+media/dashboard.js-135-      authNone: '无认证', baseUrlNote: '通常填写到 /v1，不要包含具体请求路径。', apiKeyPlaceholder: '留空表示保留已保存的密钥',
+media/dashboard.js-136-      toggleApiKey: '显示或隐藏 API Key', apiKeyNote: '保存在 VS Code SecretStorage；密钥不会被导出。', envKey: 'API Key 环境变量名',
+media/dashboard.js-137-      envKeyNote: '目标 CLI 从它的启动环境读取该变量。', envHint: '环境变量配置提示（可选）', envHintPlaceholder: '请设置 MODEL_SWITCH_API_KEY',
+media/dashboard.js-138-      allowHttp: '允许远程 HTTP（危险）', allowHttpNote: '远程 HTTP 会明文传输凭据。', ignoreTls: '获取模型列表时忽略 TLS 错误（危险）',
+media/dashboard.js-139-      ignoreTlsNote: '只影响插件的模型列表请求。', advancedCompatibility: '高级兼容设置', discoveryPath: '模型发现路径',
+--
+media/dashboard.js-160-      envReference: '环境变量认证', configExists: '配置文件存在', configMissing: '配置文件不存在', targetManaged: '{target} 已由 ModelMux 管理',
+media/dashboard.js-161-      targetOriginal: '{target} 使用原配置', restoreUnavailable: '当前状态下无法恢复原配置。', applyUnavailable: '当前状态下无法应用此 Provider。',
+media/dashboard.js-162-      editUnavailable: '此 Provider 正在使用，无法编辑。', deleteUnavailable: '此 Provider 正在使用，无法删除。',
+media/dashboard.js-163-      clearSecretUnavailable: '此凭据正在使用，无法清除。', openConfigUnavailable: '配置文件不存在。', noModels: '没有可用模型', modelAria: '{name} 模型', unsupported: '当前 CLI 不兼容',
+media/dashboard.js-164-      unsupportedAuth: '该 CLI 的自定义 Provider 仅支持环境变量认证或无认证。', unsupportedKind: '{target} 不支持 {kind} 配置。',
+media/dashboard.js:165:      claudeEnvRequired: 'Claude Code 必须使用 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN。', active: '当前使用', missingSecret: '缺少密钥',
+media/dashboard.js:166:      secretReady: '密钥就绪', envReady: '环境变量就绪', envNotReady: '环境变量不可用', tlsException: 'TLS 例外', regionUnset: '未设置区域',
+media/dashboard.js-167-      builtInProvider: '{kind} 凭据', modelsAvailable: '{count} 个模型', reapply: '重新应用', activate: '启用', enableFor: '为 {target} 启用',
+media/dashboard.js-168-      selectModel: '选择模型', providerActions: '{name} 的操作', edit: '编辑', switchBeforeEdit: '请先恢复或切换 Provider', previewConfig: '预览配置',
+media/dashboard.js-169-      testConnection: '测试连接', syncModels: '同步模型', clearSecret: '清除密钥', delete: '删除', profileCount: '{count}', addFirstProvider: '添加第一个 Provider',
+media/dashboard.js-170-      noProviders: '还没有 Provider', noProvidersNote: '添加官方 Provider 或兼容网关。', noResults: '没有匹配结果',
+media/dashboard.js-171-      noResultsNote: '尝试搜索 Provider 名称、模型 ID 或接口地址。', stateRefreshed: '状态已刷新。', restored: '已恢复 {target} 的原始配置。',
+media/dashboard.js-172-      connecting: '正在连接...', modelsFetched: '已获取 {count} 个模型。', providerSaved: 'Provider 已保存。', providerDeleted: 'Provider 已删除。',
+media/dashboard.js:173:      modelsSynced: '已同步 {count} 个模型。', secretCleared: 'API Key 已从 SecretStorage 中清除。', activatedToast: '已为 {target} 写入 {model}。',
+media/dashboard.js-174-      operationFailed: '操作失败', defaultRestored: '已恢复默认外观。', defaultFontRestored: '已恢复 VS Code 默认字体。', operationCancelled: '操作已取消。',
+media/dashboard.js-175-      editCancelled: '已放弃 Provider 修改。', importCancelled: '已取消导入。', exportCancelled: '已取消导出。',
+media/dashboard.js-176-      importFinished: '导入对话框已关闭。', exportFinished: '导出对话框已关闭。', fixErrors: '请修正以下字段',
+media/dashboard.js-177-      formHasErrors: '请检查 {count} 个标记字段。', requiredField: '{field}不能为空。', invalidProviderId: '仅可使用字母、数字、下划线和连字符，且不能以数字开头。',
+media/dashboard.js-178-      invalidUrl: '请输入有效的 HTTP 或 HTTPS 地址。', unsafeHttp: '请使用 HTTPS，或明确允许不安全的远程 HTTP。', invalidEnvName: '请输入有效的环境变量名。',
+--
+media/dashboard.js-373-  }
+media/dashboard.js-374-
+media/dashboard.js-375-  function kindLabel(kind) {
+media/dashboard.js-376-    const keys = {
+media/dashboard.js-377-      openai: 'kindOpenAi', anthropic: 'kindAnthropic', gemini: 'kindGemini', grok: 'kindGrok', ollama: 'kindOllama',
+media/dashboard.js:378:      lmstudio: 'kindLmStudio', customResponses: 'kindCustomResponses', customChat: 'kindCustomChat', customAnthropic: 'kindCustomAnthropic'
+media/dashboard.js-379-    };
+media/dashboard.js-380-    if (kind === 'bedrock') return 'Amazon Bedrock';
+media/dashboard.js-381-    return t(keys[kind] || 'kindCustomResponses');
+media/dashboard.js-382-  }
+media/dashboard.js-383-
+media/dashboard.js-384-  function isCustomKind(kind) {
+media/dashboard.js:385:    return ['customResponses', 'customChat', 'customAnthropic'].includes(kind);
+media/dashboard.js-386-  }
+media/dashboard.js-387-
+media/dashboard.js-388-  function uniqueModelIds(models) {
+media/dashboard.js-389-    const unique = Array.from(new Set((Array.isArray(models) ? models : [])
+media/dashboard.js-390-      .map(model => String(model || '').trim()).filter(Boolean)));
+--
+media/dashboard.js-396-      .test(String(model || ''));
+media/dashboard.js-397-  }
+media/dashboard.js-398-
+media/dashboard.js-399-  function filterModelsForProviderKind(models, kind) {
+media/dashboard.js-400-    const unique = uniqueModelIds(models);
+media/dashboard.js:401:    if (['customAnthropic', 'anthropic'].includes(kind)) return unique.filter(isClaudeModelId);
+media/dashboard.js-402-    if (['customResponses', 'customChat', 'openai'].includes(kind)) {
+media/dashboard.js-403-      return unique.filter(model => !isClaudeModelId(model));
+media/dashboard.js-404-    }
+media/dashboard.js-405-    return unique;
+media/dashboard.js-406-  }
+--
+media/dashboard.js-573-    try {
+media/dashboard.js-574-      const result = await busy(button, () => request('clearApiKey', { profileId: profile.id }), $('providerList'));
+media/dashboard.js-575-      if (result.cancelled || result.status === 'cancelled') {
+media/dashboard.js-576-        toast(t('clearedCancelled'));
+media/dashboard.js-577-        announce(t('clearedCancelled'));
+media/dashboard.js:578:      } else toast(t('secretCleared'));
+media/dashboard.js-579-    } catch (error) { reportOperationError(error); }
+media/dashboard.js-580-  }
+media/dashboard.js-581-
+media/dashboard.js-582-  async function deleteProvider(profile, button) {
+media/dashboard.js-583-    if (!capability(profile.canDelete, !profile.active)) {
+--
+media/dashboard.js-653-    const badges = create('span', { className: 'provider-badges' });
+media/dashboard.js-654-    if (profile.active) badges.append(create('span', { className: 'provider-badge active', text: t('active') }));
+media/dashboard.js-655-    if (!profile.supported) badges.append(create('span', { className: 'provider-badge warning', text: t('unsupported') }));
+media/dashboard.js-656-    if (profile.requiresSecret) badges.append(create('span', {
+media/dashboard.js-657-      className: `provider-badge ${profile.hasSecret ? '' : 'warning'}`,
+media/dashboard.js:658:      text: profile.hasSecret ? t('secretReady') : t('missingSecret')
+media/dashboard.js-659-    }));
+media/dashboard.js:660:    if (profile.authMode === 'env' || profile.authMode === 'envHeaders') badges.append(create('span', {
+media/dashboard.js-661-      className: `provider-badge ${profile.envReady ? '' : 'warning'}`,
+media/dashboard.js-662-      text: profile.envReady ? t('envReady') : t('envNotReady')
+media/dashboard.js-663-    }));
+media/dashboard.js-664-    if (profile.allowInsecureModelDiscovery) badges.append(create('span', { className: 'provider-badge warning', text: t('tlsException') }));
+media/dashboard.js-665-
+--
+media/dashboard.js-828-    const local = kind === 'ollama' || kind === 'lmstudio';
+media/dashboard.js-829-    $('customFields').classList.toggle('hidden', !custom);
+media/dashboard.js-830-    $('bedrockFields').classList.toggle('hidden', !bedrock);
+media/dashboard.js-831-    $('fetchRow').classList.toggle('hidden', !custom);
+media/dashboard.js-832-    const responseCustom = kind === 'customResponses';
+media/dashboard.js:833:    $('authMode').querySelector('option[value="secret"]').disabled = custom && !responseCustom;
+media/dashboard.js:834:    $('authMode').querySelector('option[value="envHeaders"]').disabled = custom && !responseCustom;
+media/dashboard.js:835:    if (custom && !responseCustom && !['env', 'none'].includes($('authMode').value)) $('authMode').value = 'env';
+media/dashboard.js:836:    const authMode = $('authMode').value;
+media/dashboard.js:837:    $('apiKeyLabel').classList.toggle('hidden', !custom || authMode !== 'secret');
+media/dashboard.js:838:    $('envKeyLabel').classList.toggle('hidden', !custom || authMode !== 'env');
+media/dashboard.js:839:    $('envKeyInstructionsLabel').classList.toggle('hidden', !custom || authMode !== 'env');
+media/dashboard.js-840-    $('connectionHint').textContent = custom
+media/dashboard.js-841-      ? t('connectionCustom', { kind: kindLabel(kind) })
+media/dashboard.js-842-      : bedrock ? t('connectionBedrock')
+media/dashboard.js-843-        : kind === 'ollama' ? t('connectionOllama')
+media/dashboard.js-844-          : kind === 'lmstudio' ? t('connectionLmStudio') : t('connectionNative', { kind: kindLabel(kind) });
+--
+media/dashboard.js-953-    editingProfile = profile || null;
+media/dashboard.js-954-    clearFormErrors();
+media/dashboard.js-955-    $('dialogTitle').textContent = profile ? t('editProviderTitle') : t('addProviderTitle');
+media/dashboard.js-956-    $('dialogSubtitle').textContent = profile ? t('editProviderSubtitle', { name: profile.name }) : t('addProviderSubtitle');
+media/dashboard.js-957-    setValue('profileId', profile && profile.id);
+media/dashboard.js:958:    const defaultKinds = { codex: 'customResponses', claude: 'customAnthropic', gemini: 'gemini', grok: 'grok', opencode: 'customChat', openclaw: 'customChat', hermes: 'customChat' };
+media/dashboard.js-959-    const defaultKind = defaultKinds[state && state.selectedTargetId] || 'customResponses';
+media/dashboard.js-960-    setValue('kind', profile && profile.kind || defaultKind);
+media/dashboard.js-961-    $('kind').disabled = Boolean(profile);
+media/dashboard.js-962-    setValue('name', profile && profile.name || kindLabel(defaultKind));
+media/dashboard.js-963-    setValue('providerId', profile && profile.providerId || 'custom_proxy');
+media/dashboard.js-964-    setValue('baseUrl', profile && profile.baseUrl || '');
+media/dashboard.js:965:    setValue('authMode', profile && profile.authMode || (state && state.selectedTargetId === 'codex' ? 'secret' : 'env'));
+media/dashboard.js-966-    setValue('apiKey', '');
+media/dashboard.js-967-    const kind = profile && profile.kind || defaultKind;
+media/dashboard.js:968:    setValue('envKey', profile && profile.envKey || (kind === 'customAnthropic' ? 'ANTHROPIC_API_KEY' : 'MODEL_SWITCH_API_KEY'));
+media/dashboard.js-969-    setValue('envKeyInstructions', profile && profile.envKeyInstructions || '');
+media/dashboard.js-970-    $('apiKey').type = 'password';
+media/dashboard.js-971-    updateApiKeyButton();
+media/dashboard.js-972-    $('allowInsecureHttp').checked = Boolean(profile && profile.allowInsecureHttp);
+media/dashboard.js-973-    $('allowInsecureModelDiscovery').checked = Boolean(profile && profile.allowInsecureModelDiscovery);
+--
+media/dashboard.js-1012-      kind: $('kind').value,
+media/dashboard.js-1013-      name: $('name').value.trim(),
+media/dashboard.js-1014-      providerId: $('providerId').value.trim(),
+media/dashboard.js-1015-      providerName: $('name').value.trim(),
+media/dashboard.js-1016-      baseUrl: $('baseUrl').value.trim(),
+media/dashboard.js:1017:      authMode: $('authMode').value,
+media/dashboard.js-1018-      envKey: $('envKey').value.trim(),
+media/dashboard.js-1019-      envKeyInstructions: $('envKeyInstructions').value.trim(),
+media/dashboard.js-1020-      allowInsecureHttp: $('allowInsecureHttp').checked,
+media/dashboard.js-1021-      allowInsecureModelDiscovery: $('allowInsecureModelDiscovery').checked,
+media/dashboard.js-1022-      modelDiscoveryPath: $('modelDiscoveryPath').value.trim(),
+--
+media/dashboard.js-1072-        const url = new URL(baseUrl);
+media/dashboard.js-1073-        if (!['http:', 'https:'].includes(url.protocol)) errors.baseUrl = t('invalidUrl');
+media/dashboard.js-1074-        const local = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+media/dashboard.js-1075-        if (url.protocol === 'http:' && !local && !$('allowInsecureHttp').checked) errors.baseUrl = t('unsafeHttp');
+media/dashboard.js-1076-      } catch { errors.baseUrl = t('invalidUrl'); }
+media/dashboard.js:1077:      if ($('authMode').value === 'secret' && !editingProfile?.hasSecret && !$('apiKey').value.trim()) {
+media/dashboard.js-1078-        errors.apiKey = t('requiredField', { field: fieldLabel('apiKey') });
+media/dashboard.js-1079-      }
+media/dashboard.js:1080:      if ($('authMode').value === 'env' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test($('envKey').value.trim())) errors.envKey = t('invalidEnvName');
+media/dashboard.js-1081-      validateRange('requestMaxRetries', 0, 20, errors);
+media/dashboard.js-1082-      validateRange('streamMaxRetries', 0, 20, errors);
+media/dashboard.js-1083-      validateRange('streamIdleTimeoutMs', 1000, 3600000, errors);
+media/dashboard.js-1084-      validateJsonObject('queryParams', errors);
+media/dashboard.js-1085-      validateJsonObject('httpHeaders', errors);
+media/dashboard.js-1086-      validateJsonObject('envHttpHeaders', errors);
+media/dashboard.js:1087:      if ($('authMode').value === 'envHeaders' && !$('envHttpHeaders').value.trim()) errors.envHttpHeaders = t('requiredField', { field: fieldLabel('envHttpHeaders') });
+media/dashboard.js-1088-    }
+media/dashboard.js-1089-    if (kind === 'bedrock' && !$('awsRegion').value.trim()) errors.awsRegion = t('requiredField', { field: fieldLabel('awsRegion') });
+media/dashboard.js-1090-    return errors;
+media/dashboard.js-1091-  }
+media/dashboard.js-1092-
+--
+media/dashboard.js-1385-  $('closeDialog').addEventListener('click', () => closeProfileDialog({ cancelled: true }));
+media/dashboard.js-1386-  $('cancelDialog').addEventListener('click', () => closeProfileDialog({ cancelled: true }));
+media/dashboard.js-1387-  $('profileDialog').addEventListener('cancel', event => { event.preventDefault(); closeProfileDialog({ cancelled: true }); });
+media/dashboard.js-1388-  $('kind').addEventListener('change', () => {
+media/dashboard.js-1389-    const kind = $('kind').value;
+media/dashboard.js:1390:    if (kind === 'customAnthropic' && (!$('envKey').value || $('envKey').value === 'MODEL_SWITCH_API_KEY')) $('envKey').value = 'ANTHROPIC_API_KEY';
+media/dashboard.js:1391:    if (['customChat', 'customAnthropic'].includes(kind) && $('authMode').value === 'secret') $('authMode').value = 'env';
+media/dashboard.js-1392-    if (!editingProfile) $('name').value = kindLabel(kind);
+media/dashboard.js-1393-    const models = $('models').value.split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
+media/dashboard.js-1394-    const filteredModels = filterModelsForProviderKind(models, kind);
+media/dashboard.js-1395-    $('models').value = filteredModels.join('\n');
+media/dashboard.js-1396-    if (!filterModelsForProviderKind([$('selectedModel').value], kind).length) $('selectedModel').value = filteredModels[0] || '';
+media/dashboard.js-1397-    updateModelSuggestions(filteredModels);
+media/dashboard.js-1398-    closeModelSuggestions();
+media/dashboard.js-1399-    updateDialogFields();
+media/dashboard.js-1400-  });
+media/dashboard.js:1401:  $('authMode').addEventListener('change', updateDialogFields);
+media/dashboard.js-1402-  $('toggleApiKey').addEventListener('click', () => {
+media/dashboard.js-1403-    $('apiKey').type = $('apiKey').type === 'password' ? 'text' : 'password';
+media/dashboard.js-1404-    updateApiKeyButton();
+media/dashboard.js-1405-  });
+media/dashboard.js-1406-  $('profileForm').addEventListener('input', event => {
+--
+README.md-155-
+README.md-156-Codex API keys can be stored in VS Code SecretStorage and are never included in exported profile JSON. Linux and macOS use a user-only runtime token file. On Windows, compatibility with some Codex versions may require a bearer token in the managed `config.toml`; ModelMux applies a restricted ACL and removes or replaces that managed file when the original configuration is restored.
+README.md-157-
+README.md-158-### Environment Variables
+README.md-159-
+README.md:160:Custom providers for other CLIs store only an environment-variable name or supported secret reference in the target configuration. The API key value is never written to provider exports or ModelMux state.
+README.md-161-
+README.md-162-Example:
+README.md-163-
+README.md-164-```bash
+README.md-165-MODEL_SWITCH_API_KEY=your-key
+--
+README.md-230-
+README.md-231-```powershell
+README.md-232-npx vsce publish --packagePath modelmux-1.5.5.vsix -p $env:VSCE_PAT
+README.md-233-```
+README.md-234-
+README.md:235:The repository is configured as `xlnn/modelmux-vscode`. Push the version commit first, then create `v1.5.5` on that exact commit and publish the GitHub Release. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies the release tag against `package.json`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
+README.md-236-
+README.md-237-## Extension Identity
+README.md-238-
+README.md-239-- Product brand: **ModelMux**; manifest display name: **ModelMux: AI CLI Model Manager**.
+README.md-240-- Package name: `codex-config-switcher`; publisher: `cherry-local`.
+--
+extension.js-36-const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+extension.js-37-const EXTENSION_VERSION = PACKAGE_MANIFEST.version;
+extension.js-38-const MAX_MODEL_RESPONSE_BYTES = 4 * 1024 * 1024;
+extension.js-39-const PENDING_PROFILE_SECRET = Symbol('pendingProfileSecret');
+extension.js-40-const MODEL_CATALOG_DIRECTORY = path.join('.modelmux', 'model-catalogs');
+extension.js:41:const CUSTOM_KINDS = new Set(['customResponses', 'customChat', 'customAnthropic']);
+extension.js-42-const TARGET_IDS = ['codex', 'claude', 'gemini', 'grok', 'opencode', 'openclaw', 'hermes'];
+extension.js-43-const TARGET_LABELS = {
+extension.js-44-  codex: 'Codex',
+extension.js-45-  claude: 'Claude Code',
+extension.js-46-  gemini: 'Gemini CLI',
+--
+extension.js-528-
+extension.js-529-function profileProtocol(profile) {
+extension.js-530-  if (!profile) return '';
+extension.js-531-  if (profile.kind === 'customResponses') return 'openai-responses';
+extension.js-532-  if (profile.kind === 'customChat') return 'openai-chat';
+extension.js:533:  if (profile.kind === 'customAnthropic') return 'anthropic-messages';
+extension.js-534-  return 'native';
+extension.js-535-}
+extension.js-536-
+extension.js-537-function targetCompatibility(targetId, profile) {
+extension.js-538-  const kind = profile && profile.kind;
+--
+extension.js-544-      assertNoSensitiveStaticValues(profile.queryParams, uiText('Query parameters', '查询参数'));
+extension.js-545-      assertNoSensitiveStaticValues(profile.httpHeaders, uiText('Static headers', '静态请求头'));
+extension.js-546-    }
+extension.js-547-    catch (error) { return { supported: false, code: 'profile', reason: error.message || String(error) }; }
+extension.js-548-  }
+extension.js:549:  if (custom && targetId !== 'codex' && !['env', 'none'].includes(profile.authMode)) {
+extension.js-550-    return { supported: false, code: 'auth', reason: '该 CLI 仅支持环境变量认证或无认证；编辑 Provider 后再启用。' };
+extension.js-551-  }
+extension.js-552-  const supportedKinds = {
+extension.js-553-    codex: ['customResponses', 'openai', 'bedrock', 'ollama', 'lmstudio'],
+extension.js:554:    claude: ['customAnthropic', 'anthropic'],
+extension.js-555-    gemini: ['gemini'],
+extension.js-556-    grok: ['grok'],
+extension.js:557:    opencode: ['customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'ollama'],
+extension.js:558:    openclaw: ['customResponses', 'customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'ollama'],
+extension.js:559:    hermes: ['customResponses', 'customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'lmstudio']
+extension.js-560-  };
+extension.js-561-  if (!(supportedKinds[targetId] || []).includes(kind)) {
+extension.js-562-    return { supported: false, code: 'kind', reason: `${targetLabel(targetId)} 不支持 ${kindLabel(kind)} 配置。` };
+extension.js-563-  }
+extension.js:564:  if (targetId === 'claude' && custom && !['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(profile.envKey)) {
+extension.js:565:    return { supported: false, code: 'claudeEnv', reason: 'Claude Code 自定义网关的环境变量名必须是 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN。' };
+extension.js-566-  }
+extension.js-567-  return { supported: true, reason: '' };
+extension.js-568-}
+extension.js-569-
+extension.js-570-function safeUserSegment() {
+--
+extension.js-696-  return normalizeStringMap(parsed);
+extension.js-697-}
+extension.js-698-
+extension.js-699-function isSensitiveName(value) {
+extension.js-700-  const normalized = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+extension.js:701:  return /(?:authorization|proxyauthorization|auth|apikey|accesskey|accesskeyid|accesskeysecret|accesstoken|bearertoken|authtoken|secrettoken|clientsecret|password|passwd|credential|signature|cookie|setcookie|sessionid|privatekey|token|secret|key)$/.test(normalized);
+extension.js-702-}
+extension.js-703-
+extension.js-704-function assertNoSensitiveStaticValues(map, fieldName) {
+extension.js-705-  const sensitive = Object.keys(normalizeStringMap(map)).filter(isSensitiveName);
+extension.js-706-  if (sensitive.length) {
+--
+extension.js-838-    const legacyProfiles = context.globalState.get(PROFILES_KEY, []);
+extension.js-839-    if (Array.isArray(legacyProfiles)) {
+extension.js-840-      for (const profile of legacyProfiles) {
+extension.js-841-        if (!profile || typeof profile.id !== 'string') continue;
+extension.js-842-        const scopedKey = profileSecretKey(context, profile.id);
+extension.js:843:        if (await context.secrets.get(scopedKey)) continue;
+extension.js:844:        const legacySecret = await context.secrets.get(legacySecretKey(profile.id));
+extension.js:845:        if (legacySecret) await context.secrets.store(scopedKey, legacySecret);
+extension.js-846-      }
+extension.js-847-    }
+extension.js-848-  }
+extension.js-849-
+extension.js-850-  await context.globalState.update(markerKey, {
+--
+extension.js-880-async function saveProfiles(context, profiles) {
+extension.js-881-  await updateEnvironmentState(context, PROFILES_KEY, profiles);
+extension.js-882-}
+extension.js-883-
+extension.js-884-async function commitProfileAndSecret(context, previousProfiles, nextProfiles, profile, apiKey) {
+extension.js:885:  const secretKey = profileSecretKey(context, profile.id);
+extension.js:886:  const oldSecret = await context.secrets.get(secretKey);
+extension.js:887:  const wantsSecret = isCustomProfile(profile) && profile.authMode === 'secret';
+extension.js-888-  const nextSecret = wantsSecret ? String(apiKey || '').trim() || oldSecret : undefined;
+extension.js-889-  if (wantsSecret && !nextSecret) {
+extension.js-890-    throw new Error(uiText('SecretStorage authentication requires an API key.', 'SecretStorage 认证需要填写 API Key。'));
+extension.js-891-  }
+extension.js-892-
+extension.js-893-  await saveProfiles(context, nextProfiles);
+extension.js-894-  try {
+extension.js-895-    if (wantsSecret) {
+extension.js:896:      if (nextSecret !== oldSecret) await context.secrets.store(secretKey, nextSecret);
+extension.js-897-    } else if (oldSecret !== undefined) {
+extension.js:898:      await context.secrets.delete(secretKey);
+extension.js-899-    }
+extension.js-900-  } catch (error) {
+extension.js-901-    const rollbackErrors = [];
+extension.js-902-    try {
+extension.js:903:      if (oldSecret !== undefined) await context.secrets.store(secretKey, oldSecret);
+extension.js:904:      else await context.secrets.delete(secretKey);
+extension.js-905-    } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+extension.js-906-    try { await saveProfiles(context, previousProfiles); }
+extension.js-907-    catch (rollbackError) { rollbackErrors.push(rollbackError); }
+extension.js-908-    if (rollbackErrors.length) {
+extension.js-909-      throw new Error(`${error.message || error}；回滚 Provider/SecretStorage 时也失败：${rollbackErrors.map(item => item.message || item).join('；')}`, { cause: error });
+--
+extension.js-927-    name: 'Custom Proxy（旧配置迁移）',
+extension.js-928-    kind: 'customResponses',
+extension.js-929-    providerId: 'custom_proxy',
+extension.js-930-    providerName: 'Custom Proxy',
+extension.js-931-    baseUrl: normalizeBaseUrl(baseUrl || ''),
+extension.js:932:    authMode: 'secret',
+extension.js-933-    models: [model || 'gpt-5.6-sol'],
+extension.js-934-    selectedModel: model || 'gpt-5.6-sol',
+extension.js-935-    reasoningPolicy: legacy.get('reasoningEffort', 'xhigh') || 'auto',
+extension.js-936-    allowInsecureModelDiscovery: false
+extension.js-937-  };
+extension.js-938-
+extension.js-939-  await saveProfiles(context, [profile]);
+extension.js:940:  const legacySecret = await context.secrets.get(LEGACY_SECRET_KEY);
+extension.js-941-  if (legacySecret) {
+extension.js:942:    await context.secrets.store(profileSecretKey(context, profile.id), legacySecret);
+extension.js-943-  }
+extension.js-944-}
+extension.js-945-
+extension.js-946-function isLikelyOpenAIReasoningModel(model) {
+extension.js-947-  const id = String(model || '').toLowerCase();
+--
+extension.js-990-  if (profile.supportsWebsockets) result += 'supports_websockets = true\n';
+extension.js-991-  if (Object.keys(normalizeStringMap(profile.queryParams)).length) result += `query_params = ${tomlInlineMap(profile.queryParams)}\n`;
+extension.js-992-  if (Object.keys(normalizeStringMap(profile.httpHeaders)).length) result += `http_headers = ${tomlInlineMap(profile.httpHeaders)}\n`;
+extension.js-993-  if (Object.keys(normalizeStringMap(profile.envHttpHeaders)).length) result += `env_http_headers = ${tomlInlineMap(profile.envHttpHeaders)}\n`;
+extension.js-994-
+extension.js:995:  const authMode = profile.authMode === 'bearer' ? 'secret' : (profile.authMode || 'secret');
+extension.js:996:  if (authMode === 'secret') {
+extension.js-997-    // Some Windows Codex builds do not execute command-backed provider auth
+extension.js-998-    // consistently from the VS Code extension host. In that case they send an
+extension.js-999-    // empty/invalid bearer token and rapidly trigger authentication-rate limits.
+extension.js-1000-    // Use the schema-supported direct bearer field on Windows for compatibility.
+extension.js-1001-    // The managed config is ACL-restricted and is removed/restored when disabled.
+--
+extension.js-1005-      result += `experimental_bearer_token = "${tomlString(token)}"\n`;
+extension.js-1006-    } else {
+extension.js-1007-      const auth = authCommandForToken(tokenPath);
+extension.js-1008-      result += `\n[model_providers.${profile.providerId}.auth]\ncommand = "${tomlString(auth.command)}"\nargs = ${tomlArray(auth.args)}\ntimeout_ms = 5000\nrefresh_interval_ms = 0\n`;
+extension.js-1009-    }
+extension.js:1010:  } else if (authMode === 'env') {
+extension.js-1011-    result += `env_key = "${tomlString(profile.envKey)}"\n`;
+extension.js-1012-    if (profile.envKeyInstructions) result += `env_key_instructions = "${tomlString(profile.envKeyInstructions)}"\n`;
+extension.js:1013:  } else if (authMode === 'envHeaders' && !Object.keys(normalizeStringMap(profile.envHttpHeaders)).length) {
+extension.js-1014-    throw new Error('环境变量请求头认证需要至少一个 env_http_headers 映射。');
+extension.js-1015-  }
+extension.js-1016-  return result;
+extension.js-1017-}
+extension.js-1018-
+--
+extension.js-1474-    if (Object.prototype.hasOwnProperty.call(parsed, key)) root[key] = parsed[key];
+extension.js-1475-  }
+extension.js-1476-  const provider = providerId && parsed.model_providers && parsed.model_providers[providerId];
+extension.js-1477-
+extension.js-1478-  const canonicalize = (value, key = '') => {
+extension.js:1479:    if (maskSecrets && key === 'experimental_bearer_token') return '<secret>';
+extension.js-1480-    if (value instanceof Date) return value.toISOString();
+extension.js-1481-    if (Array.isArray(value)) return value.map(item => canonicalize(item));
+extension.js-1482-    if (value && typeof value === 'object') {
+extension.js-1483-      return Object.fromEntries(Object.keys(value).sort().map(name => [name, canonicalize(value[name], name)]));
+extension.js-1484-    }
+--
+extension.js-1497-  const profile = getProfiles(context).find(item => item.id === originalState.profileId);
+extension.js-1498-  if (!profile) return undefined;
+extension.js-1499-  const model = active && active.model || originalState.model || profile.selectedModel;
+extension.js-1500-  if (!model) return undefined;
+extension.js-1501-  try {
+extension.js:1502:    let secret;
+extension.js-1503-    let maskSecrets = true;
+extension.js-1504-    if (process.platform === 'win32' && profile.kind === 'customResponses'
+extension.js:1505:      && ['secret', 'bearer'].includes(profile.authMode)) {
+extension.js:1506:      secret = context && context.secrets && await context.secrets.get(profileSecretKey(context, profile.id));
+extension.js:1507:      if (secret) maskSecrets = false;
+extension.js:1508:      else secret = '<unavailable-secret>';
+extension.js-1509-    }
+extension.js-1510-    return {
+extension.js:1511:      value: managedCodexConfigProjection(buildManagedConfig(profile, model, files.token, secret, {
+extension.js-1512-        codexDir: files.codexDir
+extension.js-1513-      }), { maskSecrets }),
+extension.js-1514-      maskSecrets
+extension.js-1515-    };
+extension.js-1516-  } catch {
+--
+extension.js-1800-  tokenPath,
+extension.js-1801-  management,
+extension.js-1802-  platform = process.platform
+extension.js-1803-) {
+extension.js-1804-  if (platform === 'win32' || !profile || profile.kind !== 'customResponses') return false;
+extension.js:1805:  const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+extension.js:1806:  if (authMode !== 'secret' || !management || !management.originalState) return false;
+extension.js-1807-
+extension.js-1808-  const metadata = parseManagedCodexMetadata(content);
+extension.js-1809-  if (!metadata) return false;
+extension.js-1810-  const stateProfileId = management.originalState.profileId;
+extension.js-1811-  const activeProfileId = management.active && management.active.profileId;
+--
+extension.js-2040-    hermes: { openai: 'openai-api', anthropic: 'anthropic', gemini: 'gemini', grok: 'xai', lmstudio: 'lmstudio' }
+extension.js-2041-  };
+extension.js-2042-  return maps[targetId] && maps[targetId][kind];
+extension.js-2043-}
+extension.js-2044-
+extension.js:2045:function environmentApiKey(profile) {
+extension.js:2046:  if (!profile || profile.authMode === 'none') return undefined;
+extension.js:2047:  if (profile.authMode !== 'env') throw new Error('该 CLI 的自定义 Provider 仅支持环境变量认证或无认证。');
+extension.js-2048-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(profile.envKey || '')) throw new Error('请为 Provider 配置有效的 API Key 环境变量名。');
+extension.js-2049-  return profile.envKey;
+extension.js-2050-}
+extension.js-2051-
+extension.js-2052-function buildClaudeConfig(profile, model, original) {
+extension.js-2053-  const config = parseJsonObject(original, 'Claude Code settings.json');
+extension.js-2054-  config.model = model;
+extension.js:2055:  if (profile.kind === 'customAnthropic') {
+extension.js-2056-    config.env = config.env && typeof config.env === 'object' && !Array.isArray(config.env) ? config.env : {};
+extension.js:2057:    config.env.ANTHROPIC_BASE_URL = normalizeBaseUrl(profile.baseUrl);
+extension.js:2058:    config.env.ANTHROPIC_MODEL = model;
+extension.js:2059:    environmentApiKey(profile);
+extension.js-2060-  }
+extension.js-2061-  return `${JSON.stringify(config, null, 2)}\n`;
+extension.js-2062-}
+extension.js-2063-
+extension.js-2064-function buildGeminiConfig(model, original) {
+--
+extension.js-2096-}
+extension.js-2097-
+extension.js-2098-function buildOpenCodeConfig(profile, model, original) {
+extension.js-2099-  let content = String(original || '').trim() ? String(original) : '{}\n';
+extension.js-2100-  if (isCustomProfile(profile)) {
+extension.js:2101:    const envKey = environmentApiKey(profile);
+extension.js:2102:    const npmPackage = profile.kind === 'customAnthropic' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible';
+extension.js-2103-    const options = { baseURL: normalizeBaseUrl(profile.baseUrl) };
+extension.js-2104-    if (envKey) options.apiKey = `{env:${envKey}}`;
+extension.js-2105-    if (Object.keys(normalizeStringMap(profile.httpHeaders)).length) options.headers = normalizeStringMap(profile.httpHeaders);
+extension.js-2106-    const provider = {
+extension.js-2107-      npm: npmPackage,
+--
+extension.js-2126-    && !Array.isArray(config.agents.defaults.model)
+extension.js-2127-    ? config.agents.defaults.model : {};
+extension.js-2128-  let providerId = nativeProviderId('openclaw', profile.kind);
+extension.js-2129-  if (isCustomProfile(profile)) {
+extension.js-2130-    providerId = profile.providerId;
+extension.js:2131:    const envKey = environmentApiKey(profile);
+extension.js-2132-    config.models = config.models && typeof config.models === 'object' && !Array.isArray(config.models) ? config.models : {};
+extension.js-2133-    config.models.mode = 'merge';
+extension.js-2134-    config.models.providers = config.models.providers && typeof config.models.providers === 'object'
+extension.js-2135-      && !Array.isArray(config.models.providers) ? config.models.providers : {};
+extension.js-2136-    const provider = {
+extension.js-2137-      baseUrl: normalizeBaseUrl(profile.baseUrl),
+extension.js-2138-      api: profile.kind === 'customResponses' ? 'openai-responses'
+extension.js:2139:        : profile.kind === 'customAnthropic' ? 'anthropic-messages' : 'openai-completions',
+extension.js-2140-      models: (profile.models || [model]).map(id => ({ id, name: id }))
+extension.js-2141-    };
+extension.js-2142-    if (envKey) provider.apiKey = { source: 'env', provider: 'default', id: envKey };
+extension.js-2143-    config.models.providers[providerId] = provider;
+extension.js-2144-  }
+--
+extension.js-2152-  catch (error) { throw new Error(`Hermes config.yaml 不是有效 YAML：${error.message || error}`); }
+extension.js-2153-  if (document.errors && document.errors.length) throw new Error(`Hermes config.yaml 不是有效 YAML：${document.errors[0].message}`);
+extension.js-2154-  let providerId = nativeProviderId('hermes', profile.kind);
+extension.js-2155-  if (isCustomProfile(profile)) {
+extension.js-2156-    providerId = profile.providerId;
+extension.js:2157:    const envKey = environmentApiKey(profile);
+extension.js-2158-    const provider = {
+extension.js-2159-      api: normalizeBaseUrl(profile.baseUrl),
+extension.js-2160-      transport: profile.kind === 'customResponses' ? 'codex_responses'
+extension.js:2161:        : profile.kind === 'customAnthropic' ? 'anthropic_messages' : 'chat_completions',
+extension.js-2162-      models: Object.fromEntries((profile.models || [model]).map(id => [id, {}]))
+extension.js-2163-    };
+extension.js-2164-    if (envKey) provider.key_env = envKey;
+extension.js-2165-    document.setIn(['providers', providerId], provider);
+extension.js-2166-    providerId = `custom:${providerId}`;
+--
+extension.js-2429-}
+extension.js-2430-
+extension.js-2431-async function fetchModelsForProfile(context, profile, apiKeyOverride) {
+extension.js-2432-  if (!isCustomProfile(profile)) throw new Error(uiText('Only custom providers support automatic model discovery.', '仅自定义 Provider 支持自动获取模型。'));
+extension.js-2433-
+extension.js:2434:  const authMode = profile.authMode === 'bearer' ? 'secret' : (profile.authMode || 'secret');
+extension.js-2435-  let apiKey = String(apiKeyOverride || '').trim();
+extension.js:2436:  if (authMode === 'secret' && !apiKey) {
+extension.js:2437:    apiKey = await context.secrets.get(profileSecretKey(context, profile.id));
+extension.js-2438-    if (!apiKey) {
+extension.js-2439-      apiKey = await promptForApiKey(context, profile, false);
+extension.js-2440-      if (!apiKey) throw new Error(uiText('No API key is available.', '没有可用的 API Key。'));
+extension.js-2441-    }
+extension.js:2442:  } else if (authMode === 'env' && !apiKey) {
+extension.js-2443-    apiKey = process.env[profile.envKey];
+extension.js-2444-    if (!apiKey) throw new Error(uiText(`Environment variable ${profile.envKey} is not set. Set it before starting or reloading VS Code.`, `环境变量 ${profile.envKey} 未设置。请在启动 VS Code/Codex 前设置它。`));
+extension.js-2445-  }
+extension.js-2446-
+extension.js-2447-  const headers = { Accept: 'application/json', ...normalizeStringMap(profile.httpHeaders) };
+--
+extension.js-2451-    if (process.env[envName]) {
+extension.js-2452-      headers[header] = process.env[envName];
+extension.js-2453-      environmentHeaderCount += 1;
+extension.js-2454-    }
+extension.js-2455-  }
+extension.js:2456:  if (authMode === 'envHeaders' && Object.keys(environmentHeaderMap).length === 0) {
+extension.js-2457-    throw new Error(uiText('Environment-variable header authentication requires at least one env_http_headers mapping.', '“环境变量请求头”认证至少需要配置一个 env_http_headers 映射。'));
+extension.js-2458-  }
+extension.js:2459:  if (authMode === 'envHeaders' && environmentHeaderCount === 0) {
+extension.js-2460-    throw new Error(uiText('None of the configured header environment variables are visible to VS Code. Set them and restart or reload VS Code.', '环境变量请求头均未在当前 VS Code 进程中找到。请设置变量并重新启动或重新加载 VS Code。'));
+extension.js-2461-  }
+extension.js-2462-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+extension.js-2463-
+extension.js-2464-  const settings = readGlobalSettings();
+--
+extension.js-2498-function profileRevisionFingerprint(profile) {
+extension.js-2499-  return contentHash(JSON.stringify(profile || {}));
+extension.js-2500-}
+extension.js-2501-
+extension.js-2502-async function profileCredentialFingerprint(context, profile) {
+extension.js:2503:  const authMode = profile && profile.authMode === 'bearer' ? 'secret' : profile && profile.authMode;
+extension.js-2504-  const material = {};
+extension.js:2505:  if (authMode === 'secret') {
+extension.js:2506:    material.secret = await context.secrets.get(profileSecretKey(context, profile.id)) || '';
+extension.js:2507:  } else if (authMode === 'env') {
+extension.js-2508-    material[profile.envKey || ''] = process.env[profile.envKey] || '';
+extension.js:2509:  } else if (authMode === 'envHeaders') {
+extension.js-2510-    for (const envName of Object.values(normalizeStringMap(profile.envHttpHeaders)).sort()) {
+extension.js-2511-      material[envName] = process.env[envName] || '';
+extension.js-2512-    }
+extension.js-2513-  }
+extension.js-2514-  return {
+--
+extension.js-2546-  });
+extension.js-2547-  return picked ? picked.value : undefined;
+extension.js-2548-}
+extension.js-2549-
+extension.js-2550-async function promptForApiKey(context, profile, allowKeepExisting = true, options = {}) {
+extension.js:2551:  const existing = await context.secrets.get(profileSecretKey(context, profile.id));
+extension.js-2552-  const value = await vscode.window.showInputBox({
+extension.js-2553-    title: `${profile.name}：API Key`,
+extension.js-2554-    prompt: existing && allowKeepExisting
+extension.js-2555-      ? '已保存密钥。留空并确认可保留原密钥；输入新值可替换。'
+extension.js-2556-      : '请输入 Bearer API Key。密钥保存在 VS Code SecretStorage，不写入 config.toml。',
+--
+extension.js-2563-  if (!trimmed && existing && allowKeepExisting) return existing;
+extension.js-2564-  if (!trimmed) {
+extension.js-2565-    await vscode.window.showErrorMessage('API Key 不能为空。');
+extension.js-2566-    return undefined;
+extension.js-2567-  }
+extension.js:2568:  if (options.store !== false) await context.secrets.store(profileSecretKey(context, profile.id), trimmed);
+extension.js-2569-  return trimmed;
+extension.js-2570-}
+extension.js-2571-
+extension.js-2572-async function chooseInitialModel(context, profile, currentModel, apiKeyOverride) {
+extension.js-2573-  const choice = await vscode.window.showQuickPick([
+--
+extension.js-2611-  return { models: [model.trim()], selectedModel: model.trim() };
+extension.js-2612-}
+extension.js-2613-
+extension.js-2614-async function createCustomProfile(context, existing, requestedKind = 'customResponses') {
+extension.js-2615-  const profile = existing ? { ...existing } : {
+extension.js:2616:    id: createId(), kind: requestedKind, authMode: requestedKind === 'customResponses' ? 'secret' : 'env', reasoningPolicy: 'auto',
+extension.js-2617-    models: [], requestMaxRetries: 0, streamMaxRetries: 2, streamIdleTimeoutMs: 300000,
+extension.js-2618-    modelDiscoveryPath: '/models'
+extension.js-2619-  };
+extension.js-2620-  const name = await promptRequired({ title: existing ? '编辑自定义 Provider' : `添加${kindLabel(profile.kind)} Provider`, prompt: '配置名称。', value: profile.name || kindLabel(profile.kind) });
+extension.js-2621-  if (!name) return undefined;
+--
+extension.js-2642-    { label: '$(symbol-variable) Bearer 环境变量', description: 'Codex 通过 env_key 读取，适合服务器、CI 与多平台', value: 'env' },
+extension.js-2643-    { label: '$(list-filter) 环境变量请求头', description: '通过 env_http_headers 适配 api-key 等非 Bearer 认证', value: 'envHeaders' },
+extension.js-2644-    { label: '$(unlock) 无认证', description: '仅适用于可信本地或内网服务', value: 'none' }
+extension.js-2645-  ];
+extension.js-2646-  if (profile.kind === 'customResponses') {
+extension.js:2647:    authChoices.unshift({ label: '$(key) SecretStorage / Windows 兼容认证', description: 'Linux/macOS 使用 token helper；Windows 写入受 ACL 保护的托管配置', value: 'secret' });
+extension.js-2648-  } else authChoices = authChoices.filter(item => item.value !== 'envHeaders');
+extension.js-2649-  const authChoice = await vscode.window.showQuickPick(authChoices, { title: '认证方式', ignoreFocusOut: true });
+extension.js-2650-  if (!authChoice) return undefined;
+extension.js:2651:  profile.authMode = authChoice.value;
+extension.js-2652-  let pendingSecret;
+extension.js:2653:  if (profile.authMode === 'secret') {
+extension.js-2654-    pendingSecret = await promptForApiKey(context, profile, Boolean(existing), { store: false });
+extension.js-2655-    if (!pendingSecret) return undefined;
+extension.js:2656:  } else if (profile.authMode === 'env') {
+extension.js:2657:    const defaultEnvKey = profile.kind === 'customAnthropic' ? 'ANTHROPIC_API_KEY' : 'MODEL_SWITCH_API_KEY';
+extension.js-2658-    const envKey = await promptRequired({ title: 'API Key 环境变量名', value: profile.envKey || defaultEnvKey, validateInput: value => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.trim()) ? undefined : '环境变量名格式无效。' });
+extension.js-2659-    if (!envKey) return undefined;
+extension.js-2660-    profile.envKey = envKey.trim();
+extension.js:2661:  } else if (profile.authMode === 'envHeaders') {
+extension.js-2662-    const mapping = await promptRequired({
+extension.js-2663-      title: '环境变量请求头映射',
+extension.js-2664-      prompt: '填写 JSON，例如 {"api-key":"AZURE_OPENAI_API_KEY"}。',
+extension.js-2665-      value: JSON.stringify(profile.envHttpHeaders || { 'api-key': 'CUSTOM_CODEX_API_KEY' }),
+extension.js-2666-      validateInput: value => { try { return Object.keys(parseJsonMap(value, '环境变量请求头映射')).length ? undefined : '至少配置一个请求头。'; } catch (error) { return error.message; } }
+--
+extension.js-2798-async function addProfile(context, statusBar) {
+extension.js-2799-  if (!(await ensureSupportedPlatform())) return;
+extension.js-2800-  const type = await vscode.window.showQuickPick([
+extension.js-2801-    { label: '$(server) 自定义 OpenAI Responses Provider', description: '适用于 Codex、OpenClaw 与 Hermes', value: 'customResponses' },
+extension.js-2802-    { label: '$(server) 自定义 OpenAI Chat Provider', description: '适用于 OpenCode、OpenClaw 与 Hermes', value: 'customChat' },
+extension.js:2803:    { label: '$(server) 自定义 Anthropic Messages Provider', description: '适用于 Claude Code、OpenClaw 与 Hermes', value: 'customAnthropic' },
+extension.js-2804-    { label: '$(account) OpenAI 官方', description: '使用 Codex 当前官方登录状态', value: 'openai' },
+extension.js-2805-    { label: '$(account) Anthropic 官方', description: '使用 Claude Code 或其它 CLI 的现有凭据', value: 'anthropic' },
+extension.js-2806-    { label: '$(account) Google Gemini 官方', description: '使用 Gemini CLI 或其它 CLI 的现有凭据', value: 'gemini' },
+extension.js-2807-    { label: '$(account) xAI Grok 官方', description: '使用 Grok Build 或其它 CLI 的现有凭据', value: 'grok' },
+extension.js-2808-    { label: '$(cloud) Amazon Bedrock', description: '使用 AWS 凭据链和 Bedrock 模型', value: 'bedrock' },
+--
+extension.js-2857-  if (profile.kind === 'gemini') return 'Google Gemini 官方';
+extension.js-2858-  if (profile.kind === 'grok') return 'xAI Grok 官方';
+extension.js-2859-  if (profile.kind === 'ollama') return 'Ollama 本地 Provider';
+extension.js-2860-  if (profile.kind === 'lmstudio') return 'LM Studio 本地 Provider';
+extension.js-2861-  if (profile.kind === 'bedrock') return `Amazon Bedrock · ${profile.awsRegion || '未设置区域'}`;
+extension.js:2862:  const auth = profile.authMode === 'env' ? `Bearer env:${profile.envKey || '?'}`
+extension.js:2863:    : profile.authMode === 'envHeaders' ? '环境变量请求头'
+extension.js:2864:      : profile.authMode === 'none' ? '无认证' : 'SecretStorage';
+extension.js-2865-  return `${profile.providerId} · ${profile.baseUrl} · ${auth}`;
+extension.js-2866-}
+extension.js-2867-
+extension.js-2868-async function editProfile(context) {
+extension.js-2869-  const existing = await chooseProfile(context, '选择要编辑的配置');
+--
+extension.js-2924-    if (active && active.profileId === profile.id && TARGET_IDS.includes(targetId)) {
+extension.js-2925-      await updateActiveTarget(context, targetId, undefined);
+extension.js-2926-    }
+extension.js-2927-  }
+extension.js-2928-  const previousProfiles = getProfiles(context);
+extension.js:2929:  const secretKey = profileSecretKey(context, profile.id);
+extension.js:2930:  const previousSecret = await context.secrets.get(secretKey);
+extension.js:2931:  await context.secrets.delete(secretKey);
+extension.js-2932-  try {
+extension.js-2933-    await saveProfiles(context, previousProfiles.filter(item => item.id !== profile.id));
+extension.js-2934-  } catch (error) {
+extension.js-2935-    if (previousSecret !== undefined) {
+extension.js:2936:      try { await context.secrets.store(secretKey, previousSecret); }
+extension.js-2937-      catch (rollbackError) {
+extension.js-2938-        throw new Error(`${error.message || error}；API Key 回滚失败：${rollbackError.message || rollbackError}`, { cause: error });
+extension.js-2939-      }
+extension.js-2940-    }
+extension.js-2941-    throw error;
+--
+extension.js-3119-  let result;
+extension.js-3120-  try {
+extension.js-3121-    const management = await assertTargetCanApply(context, 'codex', files, true);
+extension.js-3122-    if (!management) return false;
+extension.js-3123-
+extension.js:3124:    const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+extension.js-3125-    let resolvedSecret;
+extension.js:3126:    if (profile.kind === 'customResponses' && authMode === 'secret') {
+extension.js:3127:      resolvedSecret = await context.secrets.get(profileSecretKey(context, profile.id));
+extension.js-3128-      if (!resolvedSecret) resolvedSecret = await promptForApiKey(context, profile, false);
+extension.js-3129-      if (!resolvedSecret) return false;
+extension.js-3130-    }
+extension.js-3131-
+extension.js-3132-    // Capture the original only after all cancellable prompts have completed.
+--
+extension.js-3152-      : desiredContent;
+extension.js-3153-
+extension.js-3154-    profileUpdateStarted = true;
+extension.js-3155-    await saveProfiles(context, profiles.map(item => item.id === updatedProfile.id ? updatedProfile : item));
+extension.js-3156-    tokenMutationStarted = true;
+extension.js:3157:    if (profile.kind === 'customResponses' && authMode === 'secret' && process.platform !== 'win32') {
+extension.js-3158-      await writeRuntimeToken(files.token, resolvedSecret);
+extension.js-3159-    } else {
+extension.js-3160-      // Windows embeds the bearer in the ACL-restricted managed config because
+extension.js-3161-      // command-backed auth is unreliable in some bundled Codex versions.
+extension.js-3162-      await removeRuntimeToken(files.token);
+--
+extension.js-3407-
+extension.js-3408-async function clearApiKey(context, statusBar) {
+extension.js-3409-  const profile = await chooseProfile(
+extension.js-3410-    context,
+extension.js-3411-    '选择要清除 API Key 的配置',
+extension.js:3412:    item => item.kind === 'customResponses' && ['secret', 'bearer'].includes(item.authMode)
+extension.js-3413-  );
+extension.js-3414-  if (!profile) return;
+extension.js-3415-  await withProfileMutation(profile.id, async () => {
+extension.js-3416-    const activeTarget = await activeManagedTargetForProfile(context, profile.id);
+extension.js-3417-    if (activeTarget) {
+--
+extension.js-3424-      '清除'
+extension.js-3425-    );
+extension.js-3426-    if (answer !== '清除') return;
+extension.js-3427-    const activeAfterConfirmation = await activeManagedTargetForProfile(context, profile.id);
+extension.js-3428-    if (activeAfterConfirmation) throw new Error(`该 API Key 已被 ${targetLabel(activeAfterConfirmation)} 使用，清除操作已取消。`);
+extension.js:3429:    await context.secrets.delete(profileSecretKey(context, profile.id));
+extension.js-3430-    await updateStatusBar(context, statusBar);
+extension.js-3431-    await vscode.window.showInformationMessage(`已清除“${profile.name}”的 API Key。`);
+extension.js-3432-  });
+extension.js-3433-}
+extension.js-3434-
+--
+extension.js-3459-  const activeRecord = getActiveTargets(context).codex;
+extension.js-3460-  const activeId = activeRecord && activeRecord.profileId;
+extension.js-3461-  const active = profiles.find(item => item.id === activeId);
+extension.js-3462-  const profileLines = [];
+extension.js-3463-  for (const profile of profiles) {
+extension.js:3464:    const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+extension.js:3465:    const hasSecret = profile.kind === 'customResponses' && authMode === 'secret'
+extension.js:3466:      ? Boolean(await context.secrets.get(profileSecretKey(context, profile.id))) : false;
+extension.js-3467-    const authText = profile.kind !== 'customResponses' ? '内置/外部凭据'
+extension.js:3468:      : authMode === 'secret' ? (hasSecret ? 'SecretStorage 已保存' : 'SecretStorage 缺失')
+extension.js:3469:        : authMode === 'env' ? `${profile.envKey || '环境变量未设置名称'}：${process.env[profile.envKey] ? '当前进程可见' : '当前进程不可见'}`
+extension.js:3470:          : authMode === 'envHeaders' ? `环境变量请求头：${Object.values(normalizeStringMap(profile.envHttpHeaders)).every(name => process.env[name]) ? '当前进程可见' : '存在缺失变量'}`
+extension.js-3471-            : '无认证';
+extension.js-3472-    profileLines.push(
+extension.js-3473-      `- ${profile.name}${profile.id === activeId ? ' [活动]' : ''}`,
+extension.js-3474-      `  类型：${providerDescription(profile)}`,
+extension.js-3475-      `  默认模型：${profile.selectedModel || '未设置'}`,
+--
+extension.js-3568-      await updateStatusBar(context, statusBar, files);
+extension.js-3569-      return;
+extension.js-3570-    }
+extension.js-3571-  }
+extension.js-3572-
+extension.js:3573:  const activeAuthMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+extension.js-3574-  let resolvedSecret;
+extension.js:3575:  if (profile.kind === 'customResponses' && activeAuthMode === 'secret') {
+extension.js:3576:    resolvedSecret = await context.secrets.get(profileSecretKey(context, profile.id));
+extension.js-3577-  }
+extension.js-3578-
+extension.js-3579-  const management = await getTargetManagementState(context, 'codex', files);
+extension.js-3580-  const currentContent = await readConfigText(files.config);
+extension.js-3581-  const contentStillMatchesState = Boolean(
+--
+extension.js-3589-  catch {
+extension.js-3590-    await updateStatusBar(context, statusBar, files);
+extension.js-3591-    return;
+extension.js-3592-  }
+extension.js-3593-
+extension.js:3594:  if (profile.kind === 'customResponses' && activeAuthMode === 'secret') {
+extension.js-3595-    const canRestoreToken = canRefreshConfig || canRecreateRuntimeTokenFromManagedConfig(
+extension.js-3596-      currentContent,
+extension.js-3597-      profile,
+extension.js-3598-      files.token,
+extension.js-3599-      management
+--
+extension.js-3747-
+extension.js-3748-  const activeRecord = getActiveTargets(context).codex;
+extension.js-3749-  const activeId = activeRecord && activeRecord.profileId;
+extension.js-3750-  const profile = getProfiles(context).find(item => item.id === activeId);
+extension.js-3751-  add('活动 Provider 记录', !managed || Boolean(profile), profile ? `${profile.name} / ${activeRecord.model || profile.selectedModel || '未选择模型'}` : managed ? '配置受管理但记录缺失' : '当前无需活动记录');
+extension.js:3752:  const authMode = profile && profile.authMode === 'bearer' ? 'secret' : profile && profile.authMode;
+extension.js-3753-  const tokenExists = await fileExists(files.token);
+extension.js:3754:  const tokenRequired = process.platform !== 'win32' && managed && profile && profile.kind === 'customResponses' && authMode === 'secret';
+extension.js-3755-  add('运行时密钥文件', !tokenRequired || tokenExists, tokenExists ? files.token : tokenRequired ? '缺失' : '当前认证方式不需要');
+extension.js-3756-
+extension.js-3757-  if (tokenExists && process.platform !== 'win32') {
+extension.js-3758-    try {
+extension.js-3759-      const stat = await fs.promises.stat(files.token);
+--
+extension.js-3770-  }
+extension.js-3771-
+extension.js-3772-  if (managed && profile && profile.kind === 'customResponses') {
+extension.js-3773-    const configText = await readConfigText(files.config);
+extension.js-3774-    add('Responses 协议', configText.includes('wire_api = "responses"'), 'wire_api = "responses"');
+extension.js:3775:    if (authMode === 'secret') {
+extension.js:3776:      const secret = await context.secrets.get(profileSecretKey(context, profile.id));
+extension.js:3777:      add('SecretStorage 密钥', Boolean(secret), secret ? '已保存（内容未显示）' : '缺失');
+extension.js-3778-      if (process.platform === 'win32') {
+extension.js:3779:        add('Windows 兼容认证', Boolean(secret) && configText.includes('experimental_bearer_token ='), '托管配置使用受 ACL 保护的 experimental_bearer_token');
+extension.js-3780-        try {
+extension.js-3781-          await verifyWindowsPrivateAcl(files.config);
+extension.js-3782-          add('Windows 配置 ACL', true, 'config.toml 仅允许当前账户与 SYSTEM 访问');
+extension.js-3783-        } catch (error) { add('Windows 配置 ACL', false, error.message || error); }
+extension.js:3784:      } else if (secret && tokenExists) {
+extension.js-3785-        try {
+extension.js-3786-          const runtime = await fs.promises.readFile(files.token, 'utf8');
+extension.js:3787:          add('运行时密钥一致性', runtime === secret.trim(), runtime === secret.trim() ? '与 SecretStorage 一致' : '不一致，请重新启用 Provider');
+extension.js-3788-          const helper = authCommandForToken(files.token);
+extension.js-3789-          const { stdout } = await execFileAsync(helper.command, helper.args, { windowsHide: true, timeout: 10000 });
+extension.js:3790:          add('Token helper 输出', stdout === secret.trim(), stdout === secret.trim() ? '输出准确且无额外换行' : '输出与密钥不一致');
+extension.js-3791-        } catch (error) { add('Token helper 输出', false, error.message || error); }
+extension.js-3792-      }
+extension.js-3793-      if (process.platform !== 'win32') {
+extension.js-3794-        const helper = authCommandForToken(files.token);
+extension.js-3795-        add('配置中的 Token 路径', configText.includes(tomlString(files.token)), files.token);
+extension.js-3796-        add('Token helper 配置', configText.includes(`command = "${tomlString(helper.command)}"`), helper.command);
+extension.js-3797-      }
+extension.js:3798:    } else if (authMode === 'env') {
+extension.js-3799-      add('环境变量名称', /^[A-Za-z_][A-Za-z0-9_]*$/.test(profile.envKey || ''), profile.envKey || '未设置');
+extension.js-3800-      add('环境变量当前可见', Boolean(process.env[profile.envKey]), process.env[profile.envKey] ? '已设置（内容未显示）' : '未在扩展进程中发现；重启 VS Code 后再检查');
+extension.js-3801-      add('config.toml env_key', configText.includes(`env_key = "${tomlString(profile.envKey)}"`), profile.envKey || '未设置');
+extension.js:3802:    } else if (authMode === 'envHeaders') {
+extension.js-3803-      const mappings = normalizeStringMap(profile.envHttpHeaders);
+extension.js-3804-      const missing = Object.values(mappings).filter(name => !process.env[name]);
+extension.js-3805-      add('环境变量请求头映射', Object.keys(mappings).length > 0, Object.keys(mappings).join(', ') || '未设置');
+extension.js-3806-      add('请求头环境变量当前可见', missing.length === 0, missing.length ? `未发现：${missing.join(', ')}` : '全部可见（内容未显示）');
+extension.js-3807-      add('config.toml env_http_headers', configText.includes('env_http_headers ='), Object.keys(mappings).join(', '));
+--
+extension.js-3836-  if (state && state.existed) add('原始备份', await fileExists(files.backup), files.backup);
+extension.js-3837-  if (active) add('当前配置文件', configExists, configExists ? files.config : '缺失');
+extension.js-3838-  if (active && profile) {
+extension.js-3839-    const compatibility = targetCompatibility(normalizedTarget, profile);
+extension.js-3840-    add('Provider 兼容性', compatibility.supported, compatibility.supported ? kindLabel(profile.kind) : compatibility.reason);
+extension.js:3841:    if (isCustomProfile(profile) && profile.authMode === 'env') {
+extension.js-3842-      add('认证环境变量', Boolean(process.env[profile.envKey]), process.env[profile.envKey] ? `${profile.envKey} 当前可见` : `${profile.envKey} 当前进程不可见`);
+extension.js-3843-    }
+extension.js-3844-  }
+extension.js-3845-  if (active && state && state.lastAppliedHash && configExists) {
+extension.js-3846-    const current = await fs.promises.readFile(files.config, 'utf8');
+--
+extension.js-3888-  await vscode.window.showTextDocument(document, { preview: true });
+extension.js-3889-  return result;
+extension.js-3890-}
+extension.js-3891-
+extension.js-3892-const EXPORTABLE_PROFILE_FIELDS = [
+extension.js:3893:  'id', 'kind', 'name', 'providerId', 'providerName', 'baseUrl', 'authMode', 'envKey',
+extension.js-3894-  'envKeyInstructions', 'allowInsecureHttp', 'allowInsecureModelDiscovery', 'modelDiscoveryPath',
+extension.js-3895-  'requestMaxRetries', 'streamMaxRetries', 'streamIdleTimeoutMs', 'supportsWebsockets',
+extension.js-3896-  'queryParams', 'httpHeaders', 'envHttpHeaders', 'awsRegion', 'awsProfile', 'selectedModel',
+extension.js-3897-  'models', 'reasoningPolicy'
+extension.js-3898-];
+--
+extension.js-3964-    const requestedId = typeof item.id === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(item.id) ? item.id : undefined;
+extension.js-3965-    const existing = requestedId ? existingById.get(requestedId) : undefined;
+extension.js-3966-    const sanitized = { ...item };
+extension.js-3967-    if (sanitized.queryParams) sanitized.queryParams = withoutSensitiveEntries(parseJsonMap(sanitized.queryParams, 'Query parameters'));
+extension.js-3968-    if (sanitized.httpHeaders) sanitized.httpHeaders = withoutSensitiveEntries(parseJsonMap(sanitized.httpHeaders, 'Static headers'));
+extension.js:3969:    const profile = normalizeProfileFromGui(sanitized, existing);
+extension.js-3970-    if (requestedId) profile.id = requestedId;
+extension.js-3971-    return { status: existing ? 'conflict' : 'new', profile, existingId: existing && existing.id };
+extension.js-3972-  });
+extension.js-3973-  return {
+extension.js-3974-    entries,
+--
+extension.js-4002-}
+extension.js-4003-
+extension.js-4004-async function exportProfiles(context) {
+extension.js-4005-  const exportLabel = uiText('Export', '导出');
+extension.js-4006-  const uri = await vscode.window.showSaveDialog({
+extension.js:4007:    title: uiText('Export ModelMux provider profiles (without secrets)', '导出 ModelMux Provider 配置（不含密钥）'),
+extension.js-4008-    defaultUri: vscode.Uri.file(path.join(os.homedir(), `modelmux-profiles-${new Date().toISOString().slice(0, 10)}.json`)),
+extension.js-4009-    filters: { JSON: ['json'] }, saveLabel: exportLabel
+extension.js-4010-  });
+extension.js-4011-  if (!uri) return { status: 'cancelled' };
+extension.js-4012-  const payload = { format: PROFILE_EXPORT_FORMAT, version: 2, exportedAt: new Date().toISOString(), profiles: getProfiles(context).map(exportableProfile) };
+--
+extension.js-4091-}
+extension.js-4092-
+extension.js-4093-async function proposedTargetContent(context, targetId, profile, model) {
+extension.js-4094-  const files = pathsForTarget(targetId);
+extension.js-4095-  if (targetId === 'codex') {
+extension.js:4096:    const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+extension.js:4097:    const placeholder = profile.kind === 'customResponses' && authMode === 'secret' && process.platform === 'win32'
+extension.js-4098-      ? redactedPreviewSecret() : undefined;
+extension.js-4099-    const desired = buildManagedConfig(profile, model, files.token, placeholder, {
+extension.js-4100-      catalogPath: modelCatalogPathForFiles(context, profile, files),
+extension.js-4101-      codexDir: files.codexDir
+extension.js-4102-    });
+--
+extension.js-4268-  if (kind === 'grok') return 'xAI Grok';
+extension.js-4269-  if (kind === 'bedrock') return 'Amazon Bedrock';
+extension.js-4270-  if (kind === 'ollama') return 'Ollama';
+extension.js-4271-  if (kind === 'lmstudio') return 'LM Studio';
+extension.js-4272-  if (kind === 'customChat') return 'OpenAI Chat 网关';
+extension.js:4273:  if (kind === 'customAnthropic') return 'Anthropic Messages 网关';
+extension.js-4274-  return 'OpenAI Responses 网关';
+extension.js-4275-}
+extension.js-4276-
+extension.js-4277-function uniqueModels(value) {
+extension.js-4278-  const raw = Array.isArray(value)
+--
+extension.js-4299-    throw new Error(uiText(`Provider ID “${trimmed}” is reserved by the configuration runtime.`, `Provider ID “${trimmed}”是配置运行时保留名称。`));
+extension.js-4300-  }
+extension.js-4301-  return trimmed;
+extension.js-4302-}
+extension.js-4303-
+extension.js:4304:function normalizeProfileFromGui(input, existing) {
+extension.js:4305:  const allowedKinds = ['customResponses', 'customChat', 'customAnthropic', 'openai', 'anthropic', 'gemini', 'grok', 'bedrock', 'ollama', 'lmstudio'];
+extension.js-4306-  const kind = allowedKinds.includes(input && input.kind) ? input.kind : 'customResponses';
+extension.js-4307-  const profile = existing ? { ...existing } : { id: createId(), models: [] };
+extension.js-4308-  profile.kind = kind;
+extension.js-4309-  profile.name = String(input && input.name || '').trim();
+extension.js-4310-  if (!profile.name) throw new Error(uiText('Profile name is required.', '配置名称不能为空。'));
+--
+extension.js-4327-    const localHost = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+extension.js-4328-    profile.allowInsecureHttp = Boolean(input.allowInsecureHttp);
+extension.js-4329-    if (url.protocol === 'http:' && !localHost && !profile.allowInsecureHttp) {
+extension.js-4330-      throw new Error(uiText('Remote HTTP transmits credentials in clear text. Use HTTPS or explicitly allow unsafe remote HTTP.', '远程 HTTP 会明文传输凭据。请改用 HTTPS，或明确勾选“允许远程 HTTP（危险）”。'));
+extension.js-4331-    }
+extension.js:4332:    const rawAuth = input.authMode === 'bearer' ? 'secret' : input.authMode;
+extension.js:4333:    profile.authMode = ['secret', 'env', 'envHeaders', 'none'].includes(rawAuth) ? rawAuth : 'secret';
+extension.js:4334:    if (kind !== 'customResponses' && !['env', 'none'].includes(profile.authMode)) {
+extension.js-4335-      throw new Error(uiText(`${kindLabel(kind)} only supports environment-variable authentication or no authentication.`, `${kindLabel(kind)}仅支持环境变量认证或无认证。`));
+extension.js-4336-    }
+extension.js-4337-    profile.envKey = String(input.envKey || '').trim();
+extension.js-4338-    profile.envKeyInstructions = String(input.envKeyInstructions || '').trim();
+extension.js:4339:    if (profile.authMode === 'env' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(profile.envKey)) throw new Error(uiText('Invalid environment-variable name.', '环境变量名格式无效。'));
+extension.js-4340-    profile.modelDiscoveryPath = String(input.modelDiscoveryPath || '/models').trim() || '/models';
+extension.js-4341-    profile.allowInsecureModelDiscovery = Boolean(input.allowInsecureModelDiscovery);
+extension.js-4342-    profile.requestMaxRetries = clampInteger(input.requestMaxRetries, 0, 0, 20);
+extension.js-4343-    profile.streamMaxRetries = clampInteger(input.streamMaxRetries, 2, 0, 20);
+extension.js-4344-    profile.streamIdleTimeoutMs = clampInteger(input.streamIdleTimeoutMs, 300000, 1000, 3600000);
+--
+extension.js-4350-    assertNoSensitiveStaticValues(profile.httpHeaders, uiText('Static headers', '静态请求头'));
+extension.js-4351-    for (const [header, envName] of Object.entries(profile.envHttpHeaders)) {
+extension.js-4352-      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(header)) throw new Error(uiText(`Invalid HTTP header name: ${header}`, `HTTP Header 名称无效：${header}`));
+extension.js-4353-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) throw new Error(uiText(`Invalid environment-variable name for header “${header}”: ${envName}`, `请求头“${header}”对应的环境变量名无效：${envName}`));
+extension.js-4354-    }
+extension.js:4355:    if (profile.authMode === 'envHeaders' && !Object.keys(profile.envHttpHeaders).length) {
+extension.js-4356-      throw new Error(uiText('Environment-variable header authentication requires at least one header mapping.', '环境变量请求头认证至少需要一个请求头到环境变量的映射。'));
+extension.js-4357-    }
+extension.js-4358-    profile.reasoningPolicy = normalizeReasoningPolicy(input.reasoningPolicy, kind === 'customResponses' ? 'auto' : 'none');
+extension.js-4359-    delete profile.awsRegion; delete profile.awsProfile;
+extension.js-4360-  } else if (kind === 'bedrock') {
+extension.js-4361-    profile.awsRegion = String(input.awsRegion || '').trim();
+extension.js-4362-    if (!profile.awsRegion) throw new Error(uiText('AWS Region is required.', 'AWS Region 不能为空。'));
+extension.js-4363-    profile.awsProfile = String(input.awsProfile || '').trim();
+extension.js-4364-    profile.reasoningPolicy = normalizeReasoningPolicy(input.reasoningPolicy, 'none');
+extension.js:4365:    for (const key of ['providerId','providerName','baseUrl','authMode','envKey','envKeyInstructions','allowInsecureModelDiscovery','allowInsecureHttp','modelDiscoveryPath','requestMaxRetries','streamMaxRetries','streamIdleTimeoutMs','supportsWebsockets','queryParams','httpHeaders','envHttpHeaders']) delete profile[key];
+extension.js-4366-  } else {
+extension.js-4367-    profile.reasoningPolicy = normalizeReasoningPolicy(input.reasoningPolicy, kind === 'openai' ? 'auto' : 'none');
+extension.js:4368:    for (const key of ['providerId','providerName','baseUrl','authMode','envKey','envKeyInstructions','allowInsecureModelDiscovery','allowInsecureHttp','modelDiscoveryPath','requestMaxRetries','streamMaxRetries','streamIdleTimeoutMs','supportsWebsockets','queryParams','httpHeaders','envHttpHeaders','awsRegion','awsProfile']) delete profile[key];
+extension.js-4369-  }
+extension.js-4370-  return profile;
+extension.js-4371-}
+extension.js-4372-
+extension.js-4373-async function getDashboardState(context) {
+--
+extension.js-4382-    ? management.currentModel
+extension.js-4383-    : activeRecord && activeRecord.model;
+extension.js-4384-  const managed = management.managed;
+extension.js-4385-  const targetMap = await managedTargetMap(context);
+extension.js-4386-  const items = await Promise.all(profiles.map(async profile => {
+extension.js:4387:    const authMode = profile.authMode === 'bearer' ? 'secret' : profile.authMode;
+extension.js:4388:    const requiresSecret = isCustomProfile(profile) && authMode === 'secret';
+extension.js:4389:    const hasSecret = requiresSecret ? Boolean(await context.secrets.get(profileSecretKey(context, profile.id))) : false;
+extension.js:4390:    const envReady = isCustomProfile(profile) && authMode === 'env'
+extension.js-4391-      ? Boolean(process.env[profile.envKey])
+extension.js:4392:      : isCustomProfile(profile) && authMode === 'envHeaders'
+extension.js-4393-        ? (() => {
+extension.js-4394-            const names = Object.values(normalizeStringMap(profile.envHttpHeaders));
+extension.js-4395-            return names.length > 0 && names.every(name => Boolean(process.env[name]));
+extension.js-4396-          })()
+extension.js-4397-        : undefined;
+--
+extension.js-4400-    const managedForSelectedTarget = Boolean(management.managed && profile.id === activeId);
+extension.js-4401-    const activeTargetId = (targetMap.get(profile.id) || [])[0];
+extension.js-4402-    return {
+extension.js-4403-      ...profile,
+extension.js-4404-      selectedModel: active && activeModel ? activeModel : profile.selectedModel,
+extension.js:4405:      authMode,
+extension.js-4406-      kindLabel: kindLabel(profile.kind),
+extension.js-4407-      description: providerDescription(profile),
+extension.js-4408-      active,
+extension.js-4409-      managedForSelectedTarget,
+extension.js-4410-      activeTargetId,
+--
+extension.js-4586-              if (activeTarget) throw new Error(uiText(
+extension.js-4587-                `This provider is active in ${targetLabel(activeTarget)}. Restore or switch providers before editing it.`,
+extension.js-4588-                `该 Provider 正在被 ${targetLabel(activeTarget)} 使用。请先恢复或切换 Provider，再编辑。`
+extension.js-4589-              ));
+extension.js-4590-            }
+extension.js:4591:            profile = normalizeProfileFromGui(input, existing);
+extension.js-4592-            const apiKey = String(message.apiKey || '').trim();
+extension.js-4593-            const next = existing
+extension.js-4594-              ? profiles.map(item => item.id === profile.id ? profile : item)
+extension.js-4595-              : [...profiles, profile];
+extension.js-4596-            await commitProfileAndSecret(this.context, profiles, next, profile, apiKey);
+--
+extension.js-4610-            id: input.id || (existing && existing.id) || createId(),
+extension.js-4611-            kind: CUSTOM_KINDS.has(input.kind) ? input.kind : 'customResponses',
+extension.js-4612-            name: String(input.name || '临时 Provider'),
+extension.js-4613-            providerId: validateProviderId(input.providerId || providerIdFromName(input.name || 'custom_proxy')),
+extension.js-4614-            baseUrl: normalizeBaseUrl(input.baseUrl),
+extension.js:4615:            authMode: input.authMode === 'bearer' ? 'secret' : (input.authMode || 'secret'),
+extension.js-4616-            envKey: String(input.envKey || '').trim(),
+extension.js-4617-            modelDiscoveryPath: String(input.modelDiscoveryPath || '/models').trim(),
+extension.js-4618-            queryParams: parseJsonMap(input.queryParams, '查询参数'),
+extension.js-4619-            httpHeaders: parseJsonMap(input.httpHeaders, '静态请求头'),
+extension.js-4620-            envHttpHeaders: parseJsonMap(input.envHttpHeaders, '环境变量请求头映射'),
+--
+extension.js-4623-          };
+extension.js-4624-          assertNoSensitiveStaticValues(temp.queryParams, uiText('Query parameters', '查询参数'));
+extension.js-4625-          assertNoSensitiveStaticValues(temp.httpHeaders, uiText('Static headers', '静态请求头'));
+extension.js-4626-          if (!temp.baseUrl) throw new Error(uiText('Enter a Base URL first.', '请先填写 Base URL。'));
+extension.js-4627-          let apiKey = String(message.apiKey || '').trim() || undefined;
+extension.js:4628:          if (temp.authMode === 'secret' && !apiKey && existing) apiKey = await this.context.secrets.get(profileSecretKey(this.context, existing.id));
+extension.js:4629:          if (temp.authMode === 'secret' && !apiKey) throw new Error(uiText('Enter an API key or save the provider secret first.', '请先填写 API Key，或先保存该 Provider 的密钥。'));
+extension.js-4630-          const models = await fetchModelsForProfile(this.context, temp, apiKey);
+extension.js-4631-          await this.respond(requestId, true, { models });
+extension.js-4632-          return;
+extension.js-4633-        }
+extension.js-4634-        case 'activateProfile': {
+--
+extension.js-4738-            const answer = await vscode.window.showWarningMessage(
+extension.js-4739-              uiText(`Clear the API key for “${profile.name}”?`, `确定清除“${profile.name}”的 API Key 吗？`),
+extension.js-4740-              { modal: true }, clearLabel
+extension.js-4741-            );
+extension.js-4742-            if (answer !== clearLabel) { cancelled = true; return; }
+extension.js:4743:            await this.context.secrets.delete(profileSecretKey(this.context, profile.id));
+extension.js-4744-          });
+extension.js-4745-          if (cancelled) {
+extension.js-4746-            await this.respond(requestId, true, { cancelled: true });
+extension.js-4747-            return;
+extension.js-4748-          }
+--
+extension.js-4930-    vscode.commands.registerCommand('codexConfigSwitcher.restoreOriginal', () => dashboardProvider.showAction('restoreOriginal', { targetId: getSelectedTargetId(context) })),
+extension.js-4931-    vscode.commands.registerCommand('codexConfigSwitcher.showStatus', () => dashboardProvider.showAction('showStatus', { targetId: getSelectedTargetId(context) })),
+extension.js-4932-    vscode.commands.registerCommand('codexConfigSwitcher.runDiagnostics', () => showDiagnostics(context, getSelectedTargetId(context))),
+extension.js-4933-    vscode.commands.registerCommand('codexConfigSwitcher.exportProfiles', () => exportProfiles(context)),
+extension.js-4934-    vscode.commands.registerCommand('codexConfigSwitcher.importProfiles', runAndRefresh(() => importProfiles(context))),
+extension.js:4935:    vscode.commands.registerCommand('codexConfigSwitcher.clearApiKey', () => routeProfileCommand(context, 'clearApiKey', uiText('Choose an API key to clear', '选择要清除密钥的 Provider'), item => isCustomProfile(item) && ['secret', 'bearer'].includes(item.authMode)))
+extension.js-4936-  );
+extension.js-4937-
+extension.js-4938-  const startupCodexFiles = pathsForCurrentUser();
+extension.js-4939-  const startupStatusFiles = pathsForTarget(getSelectedTargetId(context));
+extension.js-4940-  recreateRuntimeTokenIfNeeded(context, statusBar, startupCodexFiles).then(() => {
+--
+extension.js-4964-    buildManagedConfig,
+extension.js-4965-    writeRuntimeToken,
+extension.js-4966-    removeRuntimeToken,
+extension.js-4967-    writeAtomic,
+extension.js-4968-    collectDiagnostics,
+extension.js:4969:    normalizeProfileFromGui,
+extension.js-4970-    parseJsonMap,
+extension.js-4971-    modelDiscoveryUrl,
+extension.js-4972-    validatedModelDiscoveryUrl,
+extension.js-4973-    runtimeEnvironmentInfo,
+extension.js-4974-    environmentScopeId,
+--
+test\webview-smoke.js-27-  filterModelsForProviderKind(mixedModels, 'customResponses'),
+test\webview-smoke.js-28-  ['gpt-5.6-sol'],
+test\webview-smoke.js-29-  'OpenAI response formats must hide Claude-family models'
+test\webview-smoke.js-30-);
+test\webview-smoke.js-31-assert.deepStrictEqual(
+test\webview-smoke.js:32:  filterModelsForProviderKind(mixedModels, 'customAnthropic'),
+test\webview-smoke.js-33-  ['claude-sonnet-4-6', 'anthropic/claude-opus-4'],
+test\webview-smoke.js-34-  'Anthropic response formats must show only Claude-family models'
+test\webview-smoke.js-35-);
+test\webview-smoke.js-36-
+test\webview-smoke.js-37-const mockVscode = {
+--
+test\security-smoke.js-47-    kind: 'customResponses',
+test\security-smoke.js-48-    name: 'Gateway',
+test\security-smoke.js-49-    providerId: 'gateway',
+test\security-smoke.js-50-    providerName: 'Gateway',
+test\security-smoke.js-51-    baseUrl: 'https://gateway.example/v1',
+test\security-smoke.js:52:    authMode: 'env',
+test\security-smoke.js-53-    envKey: 'MODEL_SWITCH_API_KEY',
+test\security-smoke.js-54-    selectedModel: 'model-a',
+test\security-smoke.js-55-    models: ['model-a'],
+test\security-smoke.js-56-    reasoningPolicy: 'none',
+test\security-smoke.js-57-    ...overrides
+--
+test\security-smoke.js-90-    'updateActiveTarget',
+test\security-smoke.js-91-    'getActiveTargets',
+test\security-smoke.js-92-    'restoreOriginal'
+test\security-smoke.js-93-  ]);
+test\security-smoke.js-94-
+test\security-smoke.js:95:  const secretValues = [
+test\security-smoke.js:96:    'Bearer export-secret',
+test\security-smoke.js:97:    'header-api-key-secret',
+test\security-smoke.js:98:    'cookie-session-secret',
+test\security-smoke.js:99:    'query-token-secret',
+test\security-smoke.js:100:    'query-signature-secret'
+test\security-smoke.js-101-  ];
+test\security-smoke.js-102-  const exported = api.exportableProfile(profile({
+test\security-smoke.js-103-    httpHeaders: {
+test\security-smoke.js:104:      Authorization: secretValues[0],
+test\security-smoke.js:105:      'X-API-Key': secretValues[1],
+test\security-smoke.js:106:      Cookie: secretValues[2],
+test\security-smoke.js-107-      'X-Client': 'modelmux-smoke'
+test\security-smoke.js-108-    },
+test\security-smoke.js-109-    queryParams: {
+test\security-smoke.js:110:      access_token: secretValues[3],
+test\security-smoke.js:111:      signature: secretValues[4],
+test\security-smoke.js-112-      'api-version': '2026-08-01'
+test\security-smoke.js-113-    },
+test\security-smoke.js-114-    hasSecret: true,
+test\security-smoke.js-115-    requiresSecret: true,
+test\security-smoke.js-116-    active: true,
+test\security-smoke.js-117-    envReady: true
+test\security-smoke.js-118-  }));
+test\security-smoke.js-119-  const exportedText = JSON.stringify(exported);
+test\security-smoke.js:120:  const leakedSecretValues = secretValues.filter(value => exportedText.includes(value));
+test\security-smoke.js-121-  assert(exportedText.includes('modelmux-smoke'), 'ordinary static headers must remain portable');
+test\security-smoke.js-122-  assert(exportedText.includes('2026-08-01'), 'ordinary query parameters must remain portable');
+test\security-smoke.js-123-  for (const runtimeOnly of ['hasSecret', 'requiresSecret', 'active', 'envReady']) {
+test\security-smoke.js-124-    assert(!Object.prototype.hasOwnProperty.call(exported, runtimeOnly), `${runtimeOnly} is runtime-only state`);
+test\security-smoke.js-125-  }
+test\security-smoke.js-126-  const genericSecrets = api.exportableProfile(profile({
+test\security-smoke.js:127:    baseUrl: 'https://url-user:url-password@gateway.example/v1?api_key=url-query-secret&api-version=2026-08-01',
+test\security-smoke.js:128:    modelDiscoveryPath: '/models?token=discovery-secret&api-version=2026-08-01',
+test\security-smoke.js:129:    httpHeaders: { token: 'generic-token-secret', 'X-Token': 'x-token-secret', 'X-Client': 'safe' },
+test\security-smoke.js:130:    queryParams: { key: 'generic-key-secret', 'api-version': '2026-08-01' }
+test\security-smoke.js-131-  }));
+test\security-smoke.js-132-  const genericExport = JSON.stringify(genericSecrets);
+test\security-smoke.js:133:  for (const value of ['url-user', 'url-password', 'url-query-secret', 'discovery-secret', 'generic-token-secret', 'x-token-secret', 'generic-key-secret']) {
+test\security-smoke.js-134-    assert(!genericExport.includes(value), `export leaked ${value}`);
+test\security-smoke.js-135-  }
+test\security-smoke.js-136-  assert(genericExport.includes('api-version'));
+test\security-smoke.js-137-  assert.strictEqual(genericSecrets.baseUrl, 'https://gateway.example/v1?api-version=2026-08-01');
+test\security-smoke.js-138-  assert.strictEqual(genericSecrets.modelDiscoveryPath, '/models?api-version=2026-08-01');
+test\security-smoke.js-139-  assert.deepStrictEqual(genericSecrets.httpHeaders, { 'X-Client': 'safe' });
+test\security-smoke.js-140-  assert.deepStrictEqual(genericSecrets.queryParams, { 'api-version': '2026-08-01' });
+test\security-smoke.js:141:  assert.throws(() => api.normalizeProfileFromGui({
+test\security-smoke.js-142-    ...profile(), name: 'bad\nname', selectedModel: 'model-a'
+test\security-smoke.js-143-  }), /control characters|控制字符/);
+test\security-smoke.js:144:  assert.throws(() => api.normalizeProfileFromGui({
+test\security-smoke.js-145-    ...profile(), baseUrl: 'https://user:password@gateway.example/v1'
+test\security-smoke.js-146-  }), /username or password|用户名或密码/);
+test\security-smoke.js:147:  assert.throws(() => api.normalizeProfileFromGui({
+test\security-smoke.js:148:    ...profile(), baseUrl: 'https://gateway.example/v1?access_token=secret'
+test\security-smoke.js-149-  }), /credential-like query|疑似凭据/);
+test\security-smoke.js-150-  assert.throws(() => api.buildManagedConfig(profile({
+test\security-smoke.js-151-    baseUrl: 'https://legacy-user:legacy-password@gateway.example/v1'
+test\security-smoke.js-152-  }), 'model-a', path.join(sandbox, 'legacy-token')), /username or password|用户名或密码/,
+test\security-smoke.js-153-  'previously saved profiles must not bypass Base URL validation');
+test\security-smoke.js-154-  assert.throws(() => api.buildManagedConfig(profile({
+test\security-smoke.js:155:    baseUrl: 'https://gateway.example/v1?api_key=legacy-secret'
+test\security-smoke.js-156-  }), 'model-a', path.join(sandbox, 'legacy-token')), /credential-like query|疑似凭据/,
+test\security-smoke.js-157-  'previously saved profiles must not write query-string credentials');
+test\security-smoke.js-158-
+test\security-smoke.js-159-  const oversizedServer = http.createServer((request, response) => {
+test\security-smoke.js-160-    response.on('error', () => {});
+--
+test\security-smoke.js-226-  const context = {
+test\security-smoke.js-227-    globalState: {
+test\security-smoke.js-228-      get(key, fallback) { return values.has(key) ? values.get(key) : fallback; },
+test\security-smoke.js-229-      async update(key, value) { values.set(key, value); }
+test\security-smoke.js-230-    },
+test\security-smoke.js:231:    secrets: { async get() { return undefined; } }
+test\security-smoke.js-232-  };
+test\security-smoke.js-233-  const stateKey = key => api.environmentStateKey(context, key);
+test\security-smoke.js-234-  const diagnostics = await api.collectTargetDiagnostics(context, 'opencode');
+test\security-smoke.js-235-  assert(diagnostics && Array.isArray(diagnostics.checks));
+test\security-smoke.js-236-  assert(!fs.existsSync(missingDirectory), 'read-only diagnostics must not create a missing CLI configuration directory');
+test\security-smoke.js-237-
+test\security-smoke.js:238:  const rollbackPrevious = [profile({ authMode: 'secret', name: 'Before rollback' })];
+test\security-smoke.js:239:  const rollbackNext = [profile({ authMode: 'secret', name: 'After rollback' })];
+test\security-smoke.js-240-  const rollbackValues = new Map();
+test\security-smoke.js-241-  const rollbackSecrets = new Map();
+test\security-smoke.js-242-  let rollbackStoreCalls = 0;
+test\security-smoke.js-243-  const rollbackContext = {
+test\security-smoke.js-244-    globalState: {
+test\security-smoke.js-245-      get(key, fallback) { return rollbackValues.has(key) ? rollbackValues.get(key) : fallback; },
+test\security-smoke.js-246-      async update(key, value) { if (value === undefined) rollbackValues.delete(key); else rollbackValues.set(key, value); }
+test\security-smoke.js-247-    },
+test\security-smoke.js:248:    secrets: {
+test\security-smoke.js-249-      async get(key) { return rollbackSecrets.get(key); },
+test\security-smoke.js-250-      async store(key, value) {
+test\security-smoke.js-251-        rollbackStoreCalls += 1;
+test\security-smoke.js-252-        if (rollbackStoreCalls === 1) throw new Error('simulated SecretStorage failure');
+test\security-smoke.js-253-        rollbackSecrets.set(key, value);
+--
+test\security-smoke.js-256-    }
+test\security-smoke.js-257-  };
+test\security-smoke.js-258-  const rollbackProfilesKey = api.environmentStateKey(rollbackContext, 'modelProfilesV2');
+test\security-smoke.js-259-  const rollbackSecretKey = api.profileSecretKey(rollbackContext, 'shared-profile');
+test\security-smoke.js-260-  rollbackValues.set(rollbackProfilesKey, rollbackPrevious);
+test\security-smoke.js:261:  rollbackSecrets.set(rollbackSecretKey, 'old-secret');
+test\security-smoke.js-262-  await assert.rejects(
+test\security-smoke.js:263:    api.commitProfileAndSecret(rollbackContext, rollbackPrevious, rollbackNext, rollbackNext[0], 'new-secret'),
+test\security-smoke.js-264-    /simulated SecretStorage failure/
+test\security-smoke.js-265-  );
+test\security-smoke.js-266-  assert.deepStrictEqual(rollbackValues.get(rollbackProfilesKey), rollbackPrevious,
+test\security-smoke.js-267-    'a SecretStorage failure must roll back the provider list');
+test\security-smoke.js:268:  assert.strictEqual(rollbackSecrets.get(rollbackSecretKey), 'old-secret',
+test\security-smoke.js-269-    'a SecretStorage failure must restore the previous credential');
+test\security-smoke.js-270-
+test\security-smoke.js-271-  const stateFailureValues = new Map();
+test\security-smoke.js-272-  let stateFailureSecretWrites = 0;
+test\security-smoke.js-273-  const stateFailureContext = {
+test\security-smoke.js-274-    globalState: {
+test\security-smoke.js-275-      get(key, fallback) { return stateFailureValues.has(key) ? stateFailureValues.get(key) : fallback; },
+test\security-smoke.js-276-      async update() { throw new Error('simulated GlobalState failure'); }
+test\security-smoke.js-277-    },
+test\security-smoke.js:278:    secrets: {
+test\security-smoke.js:279:      async get() { return 'old-secret'; },
+test\security-smoke.js-280-      async store() { stateFailureSecretWrites += 1; },
+test\security-smoke.js-281-      async delete() { stateFailureSecretWrites += 1; }
+test\security-smoke.js-282-    }
+test\security-smoke.js-283-  };
+test\security-smoke.js-284-  const stateFailureProfilesKey = api.environmentStateKey(stateFailureContext, 'modelProfilesV2');
+test\security-smoke.js-285-  stateFailureValues.set(stateFailureProfilesKey, rollbackPrevious);
+test\security-smoke.js-286-  await assert.rejects(
+test\security-smoke.js:287:    api.commitProfileAndSecret(stateFailureContext, rollbackPrevious, rollbackNext, rollbackNext[0], 'new-secret'),
+test\security-smoke.js-288-    /simulated GlobalState failure/
+test\security-smoke.js-289-  );
+test\security-smoke.js-290-  assert.deepStrictEqual(stateFailureValues.get(stateFailureProfilesKey), rollbackPrevious);
+test\security-smoke.js-291-  assert.strictEqual(stateFailureSecretWrites, 0,
+test\security-smoke.js-292-    'a GlobalState failure must not partially update SecretStorage');
+--
+test\security-smoke.js-503-          failCanonicalActiveUpdate = false;
+test\security-smoke.js-504-          throw new Error('simulated activation state commit failure');
+test\security-smoke.js-505-        }
+test\security-smoke.js-506-      }
+test\security-smoke.js-507-    },
+test\security-smoke.js:508:    secrets: { async get() { return undefined; } }
+test\security-smoke.js-509-  };
+test\security-smoke.js-510-  await assert.rejects(
+test\security-smoke.js-511-    api.activateProfile(transactionContext, transactionProfile.id, {}, 'new-model', {
+test\security-smoke.js-512-      files: transactionFiles,
+test\security-smoke.js-513-      offerReload: false,
+--
+test\security-smoke.js-548-  const tokenManagement = {
+test\security-smoke.js-549-    status: 'managed-drifted',
+test\security-smoke.js-550-    active: undefined,
+test\security-smoke.js-551-    originalState: { profileId: 'shared-profile', model: 'remote-model', lastAppliedHash: 'previous-hash' }
+test\security-smoke.js-552-  };
+test\security-smoke.js:553:  const tokenProfile = profile({ authMode: 'secret' });
+test\security-smoke.js-554-  assert.strictEqual(
+test\security-smoke.js-555-    api.canRecreateRuntimeTokenFromManagedConfig(tokenContent, tokenProfile, tokenPath, tokenManagement, 'linux'),
+test\security-smoke.js-556-    true,
+test\security-smoke.js-557-    'a harmless config drift may recreate the private token without rewriting config'
+test\security-smoke.js-558-  );
+--
+test\security-smoke.js-590-    token: path.join(codexExtensionDir, 'runtime-token')
+test\security-smoke.js-591-  };
+test\security-smoke.js-592-  fs.mkdirSync(codexExtensionDir, { recursive: true });
+test\security-smoke.js-593-  const codexExtensionProfile = profile({
+test\security-smoke.js-594-    id: 'codex-extension-profile',
+test\security-smoke.js:595:    authMode: 'env',
+test\security-smoke.js-596-    selectedModel: 'extension-model',
+test\security-smoke.js-597-    models: ['extension-model']
+test\security-smoke.js-598-  });
+test\security-smoke.js-599-  const codexManagedContent = api.buildManagedConfig(
+test\security-smoke.js-600-    codexExtensionProfile,
+--
+test\security-smoke.js-723-  const restoreMergeContext = {
+test\security-smoke.js-724-    globalState: {
+test\security-smoke.js-725-      get(key, fallback) { return restoreMergeValues.has(key) ? restoreMergeValues.get(key) : fallback; },
+test\security-smoke.js-726-      async update(key, value) { if (value === undefined) restoreMergeValues.delete(key); else restoreMergeValues.set(key, value); }
+test\security-smoke.js-727-    },
+test\security-smoke.js:728:    secrets: { async get() { return undefined; } }
+test\security-smoke.js-729-  };
+test\security-smoke.js-730-  await api.restoreOriginal(restoreMergeContext, { show() {} }, {
+test\security-smoke.js-731-    files: restoreMergeFiles,
+test\security-smoke.js-732-    offerReload: false,
+test\security-smoke.js-733-    showError: false,
+--
+test\security-smoke.js-759-  const codexExtensionContext = {
+test\security-smoke.js-760-    globalState: {
+test\security-smoke.js-761-      get(key, fallback) { return codexExtensionValues.has(key) ? codexExtensionValues.get(key) : fallback; },
+test\security-smoke.js-762-      async update(key, value) { if (value === undefined) codexExtensionValues.delete(key); else codexExtensionValues.set(key, value); }
+test\security-smoke.js-763-    },
+test\security-smoke.js:764:    secrets: { async get() { return undefined; } }
+test\security-smoke.js-765-  };
+test\security-smoke.js-766-  const extensionClean = await api.getTargetManagementState(codexExtensionContext, 'codex', codexExtensionFiles);
+test\security-smoke.js-767-  assert.strictEqual(extensionClean.status, 'managed-clean', 'Codex-owned sections must not cause a drift warning');
+test\security-smoke.js-768-  assert.strictEqual(extensionClean.managedMatch, true);
+test\security-smoke.js-769-  assert.strictEqual(extensionClean.hasUnmanagedChanges, true);
+--
+test\security-smoke.js-819-    token: path.join(raceDir, 'runtime-token')
+test\security-smoke.js-820-  };
+test\security-smoke.js-821-  fs.mkdirSync(raceDir, { recursive: true });
+test\security-smoke.js-822-  const raceProfile = profile({
+test\security-smoke.js-823-    id: 'startup-race-profile',
+test\security-smoke.js:824:    authMode: 'secret',
+test\security-smoke.js-825-    selectedModel: 'race-model',
+test\security-smoke.js-826-    models: ['race-model']
+test\security-smoke.js-827-  });
+test\security-smoke.js:828:  const raceContent = api.buildManagedConfig(raceProfile, 'race-model', raceFiles.token, 'race-secret');
+test\security-smoke.js-829-  fs.writeFileSync(raceFiles.config, raceContent);
+test\security-smoke.js-830-  fs.writeFileSync(raceFiles.originalState, JSON.stringify({
+test\security-smoke.js-831-    existed: false,
+test\security-smoke.js-832-    lastAppliedHash: api.contentHash(raceContent),
+test\security-smoke.js-833-    profileId: raceProfile.id,
+test\security-smoke.js-834-    model: 'race-model'
+test\security-smoke.js-835-  }));
+test\security-smoke.js-836-  const raceValues = new Map();
+test\security-smoke.js-837-  let releaseSecret;
+test\security-smoke.js-838-  let markSecretRead;
+test\security-smoke.js:839:  const secretRead = new Promise(resolve => { markSecretRead = resolve; });
+test\security-smoke.js:840:  const secretGate = new Promise(resolve => { releaseSecret = resolve; });
+test\security-smoke.js-841-  const raceContext = {
+test\security-smoke.js-842-    globalState: {
+test\security-smoke.js-843-      get(key, fallback) { return raceValues.has(key) ? raceValues.get(key) : fallback; },
+test\security-smoke.js-844-      async update(key, value) { if (value === undefined) raceValues.delete(key); else raceValues.set(key, value); }
+test\security-smoke.js-845-    },
+test\security-smoke.js:846:    secrets: {
+test\security-smoke.js-847-      async get() {
+test\security-smoke.js-848-        markSecretRead();
+test\security-smoke.js:849:        await secretGate;
+test\security-smoke.js:850:        return 'race-secret';
+test\security-smoke.js-851-      }
+test\security-smoke.js-852-    }
+test\security-smoke.js-853-  };
+test\security-smoke.js-854-  raceValues.set(api.environmentStateKey(raceContext, 'modelProfilesV2'), [raceProfile]);
+test\security-smoke.js-855-  raceValues.set(api.environmentStateKey(raceContext, 'activeCliTargetsV1'), {
+test\security-smoke.js-856-    codex: { profileId: raceProfile.id, model: 'race-model' }
+test\security-smoke.js-857-  });
+test\security-smoke.js-858-  const raceStatusBar = { show() {}, text: '', tooltip: '' };
+test\security-smoke.js-859-  const startupRefresh = api.recreateRuntimeTokenIfNeeded(raceContext, raceStatusBar, raceFiles);
+test\security-smoke.js:860:  await secretRead;
+test\security-smoke.js-861-  const externallyEditedRaceContent = `${raceContent}# edit while SecretStorage is pending\n`;
+test\security-smoke.js-862-  fs.writeFileSync(raceFiles.config, externallyEditedRaceContent);
+test\security-smoke.js-863-  let competingMutationStarted = false;
+test\security-smoke.js-864-  const competingMutation = api.withProfileMutation(raceProfile.id, () => api.withTargetMutation('codex', async () => {
+test\security-smoke.js-865-    competingMutationStarted = true;
+--
+test\security-smoke.js-906-  const orphanContext = {
+test\security-smoke.js-907-    globalState: {
+test\security-smoke.js-908-      get(key, fallback) { return orphanValues.has(key) ? orphanValues.get(key) : fallback; },
+test\security-smoke.js-909-      async update(key, value) { if (value === undefined) orphanValues.delete(key); else orphanValues.set(key, value); }
+test\security-smoke.js-910-    },
+test\security-smoke.js:911:    secrets: { async get() { return undefined; } }
+test\security-smoke.js-912-  };
+test\security-smoke.js-913-  await api.recreateRuntimeTokenIfNeeded(orphanContext, raceStatusBar, orphanFiles);
+test\security-smoke.js-914-  assert(!fs.existsSync(orphanFiles.token), 'an orphaned provider must not retain a runtime credential from another host scope');
+test\security-smoke.js-915-  assert.strictEqual(fs.readFileSync(orphanFiles.config, 'utf8'), orphanContent, 'orphan cleanup must not overwrite the managed config');
+test\security-smoke.js-916-
+--
+test\environment-storage-smoke.js-16-  return originalLoad.call(this, request, parent, isMain);
+test\environment-storage-smoke.js-17-};
+test\environment-storage-smoke.js-18-
+test\environment-storage-smoke.js-19-const api = require('../extension.js').__test;
+test\environment-storage-smoke.js-20-const state = new Map();
+test\environment-storage-smoke.js:21:const secrets = new Map();
+test\environment-storage-smoke.js-22-function createContext() {
+test\environment-storage-smoke.js-23-  return {
+test\environment-storage-smoke.js-24-    globalState: {
+test\environment-storage-smoke.js-25-      get(key, fallback) { return state.has(key) ? state.get(key) : fallback; },
+test\environment-storage-smoke.js-26-      async update(key, value) { if (value === undefined) state.delete(key); else state.set(key, value); }
+test\environment-storage-smoke.js-27-    },
+test\environment-storage-smoke.js:28:    secrets: {
+test\environment-storage-smoke.js:29:      async get(key) { return secrets.get(key); },
+test\environment-storage-smoke.js:30:      async store(key, value) { secrets.set(key, value); },
+test\environment-storage-smoke.js:31:      async delete(key) { secrets.delete(key); }
+test\environment-storage-smoke.js-32-    },
+test\environment-storage-smoke.js-33-    globalStorageUri: { scheme: 'file', authority: '', fsPath: '/extension-global-storage' }
+test\environment-storage-smoke.js-34-  };
+test\environment-storage-smoke.js-35-}
+test\environment-storage-smoke.js-36-
+--
+test\environment-storage-smoke.js-40-    name,
+test\environment-storage-smoke.js-41-    kind: 'customResponses',
+test\environment-storage-smoke.js-42-    providerId: id.replace(/-/g, '_'),
+test\environment-storage-smoke.js-43-    providerName: name,
+test\environment-storage-smoke.js-44-    baseUrl: `https://${id}.example/v1`,
+test\environment-storage-smoke.js:45:    authMode: 'secret',
+test\environment-storage-smoke.js-46-    selectedModel: 'model-a',
+test\environment-storage-smoke.js-47-    models: ['model-a']
+test\environment-storage-smoke.js-48-  };
+test\environment-storage-smoke.js-49-}
+test\environment-storage-smoke.js-50-
+test\environment-storage-smoke.js-51-(async () => {
+test\environment-storage-smoke.js-52-  const localContext = createContext();
+test\environment-storage-smoke.js-53-  const localProfile = profile('local-provider', 'Local Windows Provider');
+test\environment-storage-smoke.js-54-  state.set('modelProfilesV2', [localProfile]);
+test\environment-storage-smoke.js-55-  state.set('activeCliTargetsV1', { codex: { profileId: localProfile.id, model: 'model-a' } });
+test\environment-storage-smoke.js:56:  secrets.set(`modelProfileApiKey:${localProfile.id}`, 'local-secret');
+test\environment-storage-smoke.js-57-
+test\environment-storage-smoke.js-58-  await api.migrateEnvironmentStorage(localContext);
+test\environment-storage-smoke.js-59-  const localProfilesKey = api.environmentStateKey(localContext, 'modelProfilesV2');
+test\environment-storage-smoke.js-60-  const localSecretKey = api.profileSecretKey(localContext, localProfile.id);
+test\environment-storage-smoke.js-61-  assert.deepStrictEqual(api.getProfiles(localContext), [localProfile], 'local host must retain pre-1.3.2 providers');
+test\environment-storage-smoke.js:62:  assert.strictEqual(await localContext.secrets.get(localSecretKey), 'local-secret', 'local legacy credential must migrate into the local scope');
+test\environment-storage-smoke.js-63-  assert(api.getActiveTargets(localContext).codex, 'local active state must migrate into the local scope');
+test\environment-storage-smoke.js-64-
+test\environment-storage-smoke.js-65-  mockVscode.env.remoteName = 'ssh-remote';
+test\environment-storage-smoke.js-66-  mockVscode.workspace.workspaceFolders = [{ uri: { scheme: 'vscode-remote', authority: 'ssh-remote+server-a' } }];
+test\environment-storage-smoke.js-67-  const serverAContext = createContext();
+test\environment-storage-smoke.js-68-  await api.migrateEnvironmentStorage(serverAContext);
+test\environment-storage-smoke.js-69-  const serverAProfilesKey = api.environmentStateKey(serverAContext, 'modelProfilesV2');
+test\environment-storage-smoke.js-70-  assert.notStrictEqual(serverAProfilesKey, localProfilesKey, 'Remote-SSH must use a different state namespace');
+test\environment-storage-smoke.js-71-  assert.deepStrictEqual(api.getProfiles(serverAContext), [], 'a remote host must not import unscoped providers from the local host');
+test\environment-storage-smoke.js-72-  assert.deepStrictEqual(api.getActiveTargets(serverAContext), {}, 'a remote host must not import local active records');
+test\environment-storage-smoke.js:73:  assert.strictEqual(await serverAContext.secrets.get(api.profileSecretKey(serverAContext, localProfile.id)), undefined, 'a remote host must not read the local API key');
+test\environment-storage-smoke.js-74-
+test\environment-storage-smoke.js-75-  const serverAProfile = profile('server-a-provider', 'Server A Provider');
+test\environment-storage-smoke.js-76-  await api.saveProfiles(serverAContext, [serverAProfile]);
+test\environment-storage-smoke.js:77:  await serverAContext.secrets.store(api.profileSecretKey(serverAContext, serverAProfile.id), 'server-a-secret');
+test\environment-storage-smoke.js-78-  assert.deepStrictEqual(api.getProfiles(serverAContext), [serverAProfile]);
+test\environment-storage-smoke.js-79-
+test\environment-storage-smoke.js-80-  mockVscode.workspace.workspaceFolders = [{ uri: { scheme: 'vscode-remote', authority: 'ssh-remote+server-b' } }];
+test\environment-storage-smoke.js-81-  const serverBContext = createContext();
+test\environment-storage-smoke.js-82-  await api.migrateEnvironmentStorage(serverBContext);
+test\environment-storage-smoke.js-83-  assert.deepStrictEqual(api.getProfiles(serverBContext), [], 'different Remote-SSH hosts must have independent provider stores');
+test\environment-storage-smoke.js:84:  assert.strictEqual(await serverBContext.secrets.get(api.profileSecretKey(serverBContext, serverAProfile.id)), undefined, 'different Remote-SSH hosts must have independent secrets');
+test\environment-storage-smoke.js-85-
+test\environment-storage-smoke.js-86-  mockVscode.env.remoteName = undefined;
+test\environment-storage-smoke.js-87-  mockVscode.workspace.workspaceFolders = [];
+test\environment-storage-smoke.js-88-  assert.deepStrictEqual(api.getProfiles(localContext), [localProfile], 'returning local must restore only the local provider store');
+test\environment-storage-smoke.js:89:  assert.strictEqual(await localContext.secrets.get(api.profileSecretKey(localContext, localProfile.id)), 'local-secret');
+test\environment-storage-smoke.js-90-
+test\environment-storage-smoke.js-91-  mockVscode.env.remoteName = 'ssh-remote';
+test\environment-storage-smoke.js-92-  mockVscode.workspace.workspaceFolders = [{ uri: { scheme: 'vscode-remote', authority: 'ssh-remote+server-a' } }];
+test\environment-storage-smoke.js-93-  assert.deepStrictEqual(api.getProfiles(serverAContext), [serverAProfile], 'returning to a remote host must restore that host\'s provider store');
+test\environment-storage-smoke.js:94:  assert.strictEqual(await serverAContext.secrets.get(api.profileSecretKey(serverAContext, serverAProfile.id)), 'server-a-secret');
+test\environment-storage-smoke.js-95-
+test\environment-storage-smoke.js-96-  console.log('PASS: local, Remote-SSH host state and SecretStorage are independently scoped.');
+test\environment-storage-smoke.js-97-})().finally(() => {
+test\environment-storage-smoke.js-98-  Module._load = originalLoad;
+test\environment-storage-smoke.js-99-}).catch(error => {
+--
+test\activation-smoke.js-52-  extension: { id: 'cherry-local.codex-config-switcher', packageJSON: { version: '1.4.0' } },
+test\activation-smoke.js-53-  globalState: {
+test\activation-smoke.js-54-    get(key, fallback) { return state.has(key) ? state.get(key) : fallback; },
+test\activation-smoke.js-55-    async update(key, value) { if (value === undefined) state.delete(key); else state.set(key, value); }
+test\activation-smoke.js-56-  },
+test\activation-smoke.js:57:  secrets: { async get() {}, async store() {}, async delete() {} }
+test\activation-smoke.js-58-};
+test\activation-smoke.js-59-
+test\activation-smoke.js-60-(async () => {
+test\activation-smoke.js-61-  await extension.activate(context);
+test\activation-smoke.js-62-  assert(registered.includes('codexConfigSwitcher.dashboard'));
+--
+test\config-smoke.js-29-  configValues.uiFontSize = 18;
+test\config-smoke.js-30-  assert.deepStrictEqual(api.readGlobalSettings().uiLanguage, 'zh-CN');
+test\config-smoke.js-31-  assert.deepStrictEqual(api.readGlobalSettings().uiFontFamily, 'monospace');
+test\config-smoke.js-32-  assert.deepStrictEqual(api.readGlobalSettings().uiFontSize, 18);
+test\config-smoke.js-33-
+test\config-smoke.js:34:  const envProfile = api.normalizeProfileFromGui({
+test\config-smoke.js-35-    kind: 'customResponses',
+test\config-smoke.js-36-    name: 'Azure-compatible gateway',
+test\config-smoke.js-37-    providerId: 'azure_gateway',
+test\config-smoke.js-38-    baseUrl: 'https://example.openai.azure.com/openai/v1',
+test\config-smoke.js:39:    authMode: 'env',
+test\config-smoke.js-40-    envKey: 'AZURE_OPENAI_API_KEY',
+test\config-smoke.js-41-    envKeyInstructions: 'Set AZURE_OPENAI_API_KEY before starting VS Code',
+test\config-smoke.js-42-    selectedModel: 'deployment-name',
+test\config-smoke.js-43-    models: ['deployment-name'],
+test\config-smoke.js-44-    reasoningPolicy: 'none',
+--
+test\config-smoke.js-71-  }));
+test\config-smoke.js-72-  assert.strictEqual(discoveryWithBaseQuery.pathname, '/openai/v1/models');
+test\config-smoke.js-73-  assert.strictEqual(discoveryWithBaseQuery.searchParams.get('tenant'), 'alpha');
+test\config-smoke.js-74-  assert.strictEqual(discoveryWithBaseQuery.searchParams.get('view'), 'full');
+test\config-smoke.js-75-  assert.strictEqual(discoveryWithBaseQuery.searchParams.get('api-version'), '2025-04-01-preview');
+test\config-smoke.js:76:  const responsesEndpointProfile = api.normalizeProfileFromGui({
+test\config-smoke.js-77-    ...envProfile,
+test\config-smoke.js-78-    baseUrl: 'https://example.openai.azure.com/openai/v1/responses?api-version=2025-04-01-preview'
+test\config-smoke.js-79-  });
+test\config-smoke.js-80-  assert.strictEqual(responsesEndpointProfile.baseUrl,
+test\config-smoke.js-81-    'https://example.openai.azure.com/openai/v1?api-version=2025-04-01-preview');
+--
+test\config-smoke.js-86-  }, true), /远程 HTTP/);
+test\config-smoke.js-87-  assert.throws(() => api.validatedModelDiscoveryUrl({
+test\config-smoke.js-88-    ...envProfile,
+test\config-smoke.js-89-    modelDiscoveryPath: 'https://other.example/models'
+test\config-smoke.js-90-  }, true), /不同源/);
+test\config-smoke.js:91:  assert.throws(() => api.normalizeProfileFromGui({
+test\config-smoke.js-92-    ...envProfile,
+test\config-smoke.js-93-    providerId: '__proto__'
+test\config-smoke.js-94-  }), /保留|reserved/i);
+test\config-smoke.js-95-  assert.strictEqual(api.targetCompatibility('openclaw', {
+test\config-smoke.js-96-    ...envProfile,
+test\config-smoke.js-97-    kind: 'customChat',
+test\config-smoke.js-98-    providerId: '__proto__'
+test\config-smoke.js-99-  }).supported, false, 'unsafe legacy provider IDs must not reach JSON config builders');
+test\config-smoke.js-100-
+test\config-smoke.js:101:  const headerAuth = api.normalizeProfileFromGui({
+test\config-smoke.js-102-    kind: 'customResponses',
+test\config-smoke.js-103-    name: 'Header auth gateway',
+test\config-smoke.js-104-    providerId: 'header_auth',
+test\config-smoke.js-105-    baseUrl: 'https://example.invalid/v1',
+test\config-smoke.js:106:    authMode: 'envHeaders',
+test\config-smoke.js-107-    envHttpHeaders: '{"api-key":"HEADER_API_KEY"}',
+test\config-smoke.js-108-    selectedModel: 'model',
+test\config-smoke.js-109-    models: ['model'],
+test\config-smoke.js-110-    reasoningPolicy: 'none'
+test\config-smoke.js-111-  });
+--
+test\config-smoke.js-113-  assert(headerConfig.includes('env_http_headers = { "api-key" = "HEADER_API_KEY" }'));
+test\config-smoke.js-114-  assert(!headerConfig.includes('env_key ='));
+test\config-smoke.js-115-  assert(!headerConfig.includes('[model_providers.header_auth.auth]'));
+test\config-smoke.js-116-
+test\config-smoke.js-117-  for (const [kind, provider] of [['ollama', 'ollama'], ['lmstudio', 'lmstudio'], ['openai', 'openai']]) {
+test\config-smoke.js:118:    const profile = api.normalizeProfileFromGui({
+test\config-smoke.js-119-      kind,
+test\config-smoke.js-120-      name: kind,
+test\config-smoke.js-121-      selectedModel: 'local-model',
+test\config-smoke.js-122-      models: ['local-model'],
+test\config-smoke.js-123-      reasoningPolicy: 'none'
+--
+test\config-smoke.js-125-    const config = api.buildManagedConfig(profile, 'local-model', '/tmp/not-used');
+test\config-smoke.js-126-    assert(config.includes(`model_provider = "${provider}"`));
+test\config-smoke.js-127-    assert(!config.includes('[model_providers.'));
+test\config-smoke.js-128-  }
+test\config-smoke.js-129-
+test\config-smoke.js:130:  const bedrock = api.normalizeProfileFromGui({
+test\config-smoke.js-131-    kind: 'bedrock',
+test\config-smoke.js-132-    name: 'Bedrock',
+test\config-smoke.js-133-    selectedModel: 'anthropic.claude-model',
+test\config-smoke.js-134-    models: ['anthropic.claude-model'],
+test\config-smoke.js-135-    awsRegion: 'us-east-1',
+--
+test\config-smoke.js-149-  const decoded = Buffer.from(windowsHelper.args[encodedIndex], 'base64').toString('utf16le');
+test\config-smoke.js-150-  assert(decoded.includes(winPath));
+test\config-smoke.js-151-  assert(decoded.includes('ReadAllText'));
+test\config-smoke.js-152-  assert(!decoded.includes('$args[0]'));
+test\config-smoke.js-153-
+test\config-smoke.js:154:  assert.throws(() => api.normalizeProfileFromGui({
+test\config-smoke.js-155-    kind: 'customResponses', name: 'Unsafe', providerId: 'unsafe', baseUrl: 'http://example.com/v1',
+test\config-smoke.js:156:    authMode: 'none', selectedModel: 'm', models: ['m']
+test\config-smoke.js-157-  }), /远程 HTTP/);
+test\config-smoke.js:158:  const allowed = api.normalizeProfileFromGui({
+test\config-smoke.js-159-    kind: 'customResponses', name: 'Allowed', providerId: 'allowed', baseUrl: 'http://example.com/v1',
+test\config-smoke.js:160:    authMode: 'none', selectedModel: 'm', models: ['m'], allowInsecureHttp: true
+test\config-smoke.js-161-  });
+test\config-smoke.js-162-  assert.strictEqual(allowed.allowInsecureHttp, true);
+test\config-smoke.js-163-
+test\config-smoke.js-164-  console.log('PASS: cross-platform config generation, env auth, local providers and Windows helper.');
+test\config-smoke.js-165-} finally {
+--
+test\multi-cli-smoke.js-28-};
+test\multi-cli-smoke.js-29-
+test\multi-cli-smoke.js-30-const api = require('../extension.js').__test;
+test\multi-cli-smoke.js-31-
+test\multi-cli-smoke.js-32-function profile(input) {
+test\multi-cli-smoke.js:33:  return api.normalizeProfileFromGui(input);
+test\multi-cli-smoke.js-34-}
+test\multi-cli-smoke.js-35-
+test\multi-cli-smoke.js-36-const customChat = profile({
+test\multi-cli-smoke.js-37-  kind: 'customChat', name: 'Chat Gateway', providerId: 'chat_gateway',
+test\multi-cli-smoke.js:38:  baseUrl: 'https://gateway.example/v1', authMode: 'env', envKey: 'MODEL_SWITCH_API_KEY',
+test\multi-cli-smoke.js-39-  selectedModel: 'chat-model', models: ['chat-model'], reasoningPolicy: 'none'
+test\multi-cli-smoke.js-40-});
+test\multi-cli-smoke.js:41:const customAnthropic = profile({
+test\multi-cli-smoke.js:42:  kind: 'customAnthropic', name: 'Claude Gateway', providerId: 'claude_gateway',
+test\multi-cli-smoke.js:43:  baseUrl: 'https://claude.example/v1', authMode: 'env', envKey: 'ANTHROPIC_API_KEY',
+test\multi-cli-smoke.js-44-  selectedModel: 'claude-model', models: ['claude-model'], reasoningPolicy: 'none'
+test\multi-cli-smoke.js-45-});
+test\multi-cli-smoke.js-46-const driftChat = {
+test\multi-cli-smoke.js-47-  ...customChat,
+test\multi-cli-smoke.js-48-  id: 'drift-chat-profile',
+--
+test\multi-cli-smoke.js-59-};
+test\multi-cli-smoke.js-60-const grok = profile({ kind: 'grok', name: 'Grok', selectedModel: 'grok-4', models: ['grok-4'] });
+test\multi-cli-smoke.js-61-const gemini = profile({ kind: 'gemini', name: 'Gemini', selectedModel: 'gemini-2.5-pro', models: ['gemini-2.5-pro'] });
+test\multi-cli-smoke.js-62-
+test\multi-cli-smoke.js-63-try {
+test\multi-cli-smoke.js:64:  const claudeConfig = JSON.parse(api.buildTargetConfig('claude', customAnthropic, 'claude-model', '{"permissions":{"allow":[]}}'));
+test\multi-cli-smoke.js-65-  assert.strictEqual(claudeConfig.model, 'claude-model');
+test\multi-cli-smoke.js:66:  assert.strictEqual(claudeConfig.env.ANTHROPIC_BASE_URL, 'https://claude.example/v1');
+test\multi-cli-smoke.js-67-  assert.deepStrictEqual(claudeConfig.permissions, { allow: [] });
+test\multi-cli-smoke.js-68-
+test\multi-cli-smoke.js-69-  const geminiConfig = JSON.parse(api.buildTargetConfig('gemini', gemini, 'gemini-2.5-pro', '{"theme":"Default"}'));
+test\multi-cli-smoke.js-70-  assert.strictEqual(geminiConfig.model.name, 'gemini-2.5-pro');
+test\multi-cli-smoke.js-71-  assert.strictEqual(geminiConfig.theme, 'Default');
+--
+test\multi-cli-smoke.js-98-  assert.strictEqual(openCode.model, 'chat_gateway/chat-model');
+test\multi-cli-smoke.js-99-  assert.strictEqual(openCode.provider.chat_gateway.options.apiKey, '{env:MODEL_SWITCH_API_KEY}');
+test\multi-cli-smoke.js-100-
+test\multi-cli-smoke.js-101-  const anthropicOpenCodeText = api.buildTargetConfig(
+test\multi-cli-smoke.js-102-    'opencode',
+test\multi-cli-smoke.js:103:    customAnthropic,
+test\multi-cli-smoke.js-104-    'claude-model',
+test\multi-cli-smoke.js-105-    '{\n  // preserve anthropic settings\n  "theme": "system"\n}\n'
+test\multi-cli-smoke.js-106-  );
+test\multi-cli-smoke.js-107-  assert(anthropicOpenCodeText.includes('// preserve anthropic settings'));
+test\multi-cli-smoke.js-108-  const anthropicOpenCode = JSON5.parse(anthropicOpenCodeText);
+test\multi-cli-smoke.js:109:  assert.strictEqual(api.targetCompatibility('opencode', customAnthropic).supported, true);
+test\multi-cli-smoke.js-110-  assert.strictEqual(anthropicOpenCode.model, 'claude_gateway/claude-model');
+test\multi-cli-smoke.js-111-  assert.strictEqual(anthropicOpenCode.provider.claude_gateway.npm, '@ai-sdk/anthropic');
+test\multi-cli-smoke.js:112:  assert.strictEqual(anthropicOpenCode.provider.claude_gateway.options.apiKey, '{env:ANTHROPIC_API_KEY}');
+test\multi-cli-smoke.js-113-
+test\multi-cli-smoke.js-114-  const openClaw = JSON.parse(api.buildTargetConfig('openclaw', customChat, 'chat-model', '{"gateway":{"port":18789}}'));
+test\multi-cli-smoke.js-115-  assert.strictEqual(openClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
+test\multi-cli-smoke.js-116-  assert.strictEqual(openClaw.models.providers.chat_gateway.api, 'openai-completions');
+test\multi-cli-smoke.js-117-  assert.deepStrictEqual(openClaw.models.providers.chat_gateway.apiKey, { source: 'env', provider: 'default', id: 'MODEL_SWITCH_API_KEY' });
+--
+test\multi-cli-smoke.js-119-    'openclaw', customChat, 'chat-model', '{"agents":[],"models":{"providers":[]}}'
+test\multi-cli-smoke.js-120-  ));
+test\multi-cli-smoke.js-121-  assert.strictEqual(repairedOpenClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
+test\multi-cli-smoke.js-122-  assert.strictEqual(repairedOpenClaw.models.providers.chat_gateway.api, 'openai-completions');
+test\multi-cli-smoke.js-123-
+test\multi-cli-smoke.js:124:  const hermes = YAML.parse(api.buildTargetConfig('hermes', customAnthropic, 'claude-model', 'terminal:\n  theme: dark\n'));
+test\multi-cli-smoke.js-125-  assert.strictEqual(hermes.model.provider, 'custom:claude_gateway');
+test\multi-cli-smoke.js-126-  assert.strictEqual(hermes.providers.claude_gateway.transport, 'anthropic_messages');
+test\multi-cli-smoke.js-127-  assert.strictEqual(hermes.terminal.theme, 'dark');
+test\multi-cli-smoke.js-128-  const hermesGemini = YAML.parse(api.buildTargetConfig('hermes', gemini, 'gemini-2.5-pro', '{}\n'));
+test\multi-cli-smoke.js-129-  assert.strictEqual(hermesGemini.model.provider, 'gemini');
+test\multi-cli-smoke.js-130-
+test\multi-cli-smoke.js:131:  const secretChat = { ...customChat, authMode: 'secret' };
+test\multi-cli-smoke.js:132:  assert.strictEqual(api.targetCompatibility('opencode', secretChat).supported, false);
+test\multi-cli-smoke.js:133:  assert.throws(() => profile({ ...customChat, id: undefined, authMode: 'secret' }), /only supports environment-variable authentication|仅支持环境变量认证或无认证/);
+test\multi-cli-smoke.js-134-  assert.strictEqual(api.targetCompatibility('codex', customChat).supported, false);
+test\multi-cli-smoke.js:135:  assert.strictEqual(api.targetCompatibility('claude', customAnthropic).supported, true);
+test\multi-cli-smoke.js-136-
+test\multi-cli-smoke.js-137-  const values = new Map();
+test\multi-cli-smoke.js-138-  let failActiveStateUpdates = false;
+test\multi-cli-smoke.js-139-  const context = {
+test\multi-cli-smoke.js-140-    globalState: {
+--
+test\multi-cli-smoke.js-144-        if (failActiveStateUpdates && key.includes('activeCliTargetsV1')) {
+test\multi-cli-smoke.js-145-          throw new Error('simulated persistent active-state failure');
+test\multi-cli-smoke.js-146-        }
+test\multi-cli-smoke.js-147-      }
+test\multi-cli-smoke.js-148-    },
+test\multi-cli-smoke.js:149:    secrets: { async get() { return undefined; }, async store() {}, async delete() {} }
+test\multi-cli-smoke.js-150-  };
+test\multi-cli-smoke.js-151-  const profilesStateKey = api.environmentStateKey(context, 'modelProfilesV2');
+test\multi-cli-smoke.js-152-  values.set(profilesStateKey, [grok, customChat, driftChat, missingConfigChat]);
+test\multi-cli-smoke.js-153-  const statusBar = { show() {}, text: '', tooltip: '' };
+test\multi-cli-smoke.js-154-  const grokFiles = api.pathsForTarget('grok');
+--
+test\multi-cli-smoke.js-160-  fs.writeFileSync(grokFiles.config, originalGrok);
+test\multi-cli-smoke.js-161-  fs.writeFileSync(openClawFiles.config, originalOpenClaw);
+test\multi-cli-smoke.js-162-
+test\multi-cli-smoke.js-163-  (async () => {
+test\multi-cli-smoke.js-164-    await Promise.all([
+test\multi-cli-smoke.js:165:      api.updateActiveTarget(context, 'codex', { profileId: customAnthropic.id, model: 'codex-model' }),
+test\multi-cli-smoke.js:166:      api.updateActiveTarget(context, 'opencode', { profileId: customAnthropic.id, model: 'opencode-model' }),
+test\multi-cli-smoke.js:167:      api.updateActiveTarget(context, 'claude', { profileId: customAnthropic.id, model: 'claude-model' }),
+test\multi-cli-smoke.js-168-      api.updateActiveTarget(context, 'hermes', { profileId: customChat.id, model: 'chat-model' })
+test\multi-cli-smoke.js-169-    ]);
+test\multi-cli-smoke.js-170-    const activeTargets = api.getActiveTargets(context);
+test\multi-cli-smoke.js-171-    assert(activeTargets.claude && activeTargets.hermes, 'concurrent target state updates must not overwrite each other');
+test\multi-cli-smoke.js-172-    assert.strictEqual(activeTargets.codex.model, 'codex-model');
+test\multi-cli-smoke.js-173-    assert.strictEqual(activeTargets.opencode.model, 'opencode-model');
+test\multi-cli-smoke.js:174:    await api.updateActiveTarget(context, 'codex', { profileId: customAnthropic.id, model: 'codex-model-2' });
+test\multi-cli-smoke.js-175-    assert.strictEqual(api.getActiveTargets(context).codex.model, 'codex-model-2');
+test\multi-cli-smoke.js-176-    assert.strictEqual(api.getActiveTargets(context).opencode.model, 'opencode-model', 'each target must own its active model');
+test\multi-cli-smoke.js-177-    await api.updateActiveTarget(context, 'codex', undefined);
+test\multi-cli-smoke.js-178-    await api.updateActiveTarget(context, 'opencode', undefined);
+test\multi-cli-smoke.js-179-    await api.updateActiveTarget(context, 'claude', undefined);
+--
+test\linux-smoke.js-20-process.env.HOME = home;
+test\linux-smoke.js-21-process.env.TMPDIR = tmp;
+test\linux-smoke.js-22-delete process.env.CODEX_HOME;
+test\linux-smoke.js-23-
+test\linux-smoke.js-24-const values = new Map();
+test\linux-smoke.js:25:const secrets = new Map();
+test\linux-smoke.js-26-const mockVscode = {
+test\linux-smoke.js-27-  env: { remoteName: 'ssh-remote' },
+test\linux-smoke.js-28-  workspace: {
+test\linux-smoke.js-29-    getConfiguration() {
+test\linux-smoke.js-30-      return { get(_key, fallback) { return fallback; } };
+--
+test\linux-smoke.js-70-  );
+test\linux-smoke.js-71-
+test\linux-smoke.js-72-  const cat = api.resolveUnixCatCommand();
+test\linux-smoke.js-73-  assert(['/bin/cat', '/usr/bin/cat', 'cat'].includes(cat));
+test\linux-smoke.js-74-
+test\linux-smoke.js:75:  const profile = api.normalizeProfileFromGui({
+test\linux-smoke.js-76-    kind: 'customResponses',
+test\linux-smoke.js-77-    name: 'Linux Test',
+test\linux-smoke.js-78-    providerId: 'linux_test',
+test\linux-smoke.js-79-    baseUrl: 'https://example.invalid/v1',
+test\linux-smoke.js:80:    authMode: 'secret',
+test\linux-smoke.js-81-    selectedModel: 'test-model',
+test\linux-smoke.js-82-    models: ['test-model'],
+test\linux-smoke.js-83-    reasoningPolicy: 'none',
+test\linux-smoke.js-84-    requestMaxRetries: 0,
+test\linux-smoke.js-85-    streamMaxRetries: 2,
+test\linux-smoke.js-86-    streamIdleTimeoutMs: 300000
+test\linux-smoke.js-87-  });
+test\linux-smoke.js-88-
+test\linux-smoke.js:89:  const key = 'test-secret-not-a-real-key';
+test\linux-smoke.js-90-  await api.writeRuntimeToken(files.token, key);
+test\linux-smoke.js-91-  const tokenStat = fs.statSync(files.token);
+test\linux-smoke.js-92-  assert.strictEqual(tokenStat.mode & 0o777, 0o600, 'token mode must be 600');
+test\linux-smoke.js-93-  assert.strictEqual(tokenStat.uid, process.getuid(), 'token owner must be current user');
+test\linux-smoke.js-94-
+--
+test\linux-smoke.js-136-  const context = {
+test\linux-smoke.js-137-    globalState: {
+test\linux-smoke.js-138-      get(name, fallback) { return values.has(name) ? values.get(name) : fallback; },
+test\linux-smoke.js-139-      async update(name, value) { values.set(name, value); }
+test\linux-smoke.js-140-    },
+test\linux-smoke.js:141:    secrets: {
+test\linux-smoke.js:142:      async get(name) { return secrets.get(name); },
+test\linux-smoke.js:143:      async store(name, value) { secrets.set(name, value); },
+test\linux-smoke.js:144:      async delete(name) { secrets.delete(name); }
+test\linux-smoke.js-145-    },
+test\linux-smoke.js-146-    extension: { packageJSON: { version: '1.4.0' }, id: 'cherry-local.codex-config-switcher' }
+test\linux-smoke.js-147-  };
+test\linux-smoke.js-148-  values.set(api.environmentStateKey(context, 'modelProfilesV2'), [profile]);
+test\linux-smoke.js-149-  values.set(api.environmentStateKey(context, 'activeProfileIdV2'), profile.id);
+test\linux-smoke.js:150:  secrets.set(api.profileSecretKey(context, profile.id), key);
+test\linux-smoke.js-151-
+test\linux-smoke.js-152-  const diagnostics = await api.collectDiagnostics(context);
+test\linux-smoke.js-153-  assert.strictEqual(diagnostics.failed, 0, JSON.stringify(diagnostics.checks, null, 2));
+test\linux-smoke.js-154-
+test\linux-smoke.js-155-  const driftedConfig = `${config}# harmless external comment\n`;
+--
+test\model-catalog-smoke.js-37-    kind: 'customResponses',
+test\model-catalog-smoke.js-38-    name: `${providerId} provider`,
+test\model-catalog-smoke.js-39-    providerName: `${providerId} provider`,
+test\model-catalog-smoke.js-40-    providerId,
+test\model-catalog-smoke.js-41-    baseUrl: `https://${providerId}.example/v1`,
+test\model-catalog-smoke.js:42:    authMode: 'none',
+test\model-catalog-smoke.js-43-    models,
+test\model-catalog-smoke.js-44-    selectedModel: models[0],
+test\model-catalog-smoke.js-45-    reasoningPolicy: 'none'
+test\model-catalog-smoke.js-46-  };
+test\model-catalog-smoke.js-47-}
+--
+test\model-catalog-smoke.js-127-    originalState: path.join(sandbox, 'config.toml.state.json'),
+test\model-catalog-smoke.js-128-    token: path.join(sandbox, 'runtime-token')
+test\model-catalog-smoke.js-129-  };
+test\model-catalog-smoke.js-130-  const context = {
+test\model-catalog-smoke.js-131-    globalState: { get(_key, fallback) { return fallback; }, async update() {} },
+test\model-catalog-smoke.js:132:    secrets: { async get() { return undefined; } }
+test\model-catalog-smoke.js-133-  };
+test\model-catalog-smoke.js-134-  const writtenFirst = api.writeModelCatalogForProfile;
+test\model-catalog-smoke.js-135-  assert.strictEqual(typeof writtenFirst, 'function');
+test\model-catalog-smoke.js-136-
+test\model-catalog-smoke.js-137-  (async () => {

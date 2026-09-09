@@ -138,6 +138,20 @@ function plannedProfiles(plan) {
   assert.strictEqual(genericSecrets.modelDiscoveryPath, '/models?api-version=2026-08-01');
   assert.deepStrictEqual(genericSecrets.httpHeaders, { 'X-Client': 'safe' });
   assert.deepStrictEqual(genericSecrets.queryParams, { 'api-version': '2026-08-01' });
+  const anthropicDirect = api.normalizeProfileFromGui({
+    kind: 'customAnthropic',
+    name: 'Direct Anthropic Gateway',
+    providerId: 'direct_anthropic',
+    providerName: 'Direct Anthropic Gateway',
+    baseUrl: 'https://anthropic.example/v1',
+    authMode: 'secret',
+    selectedModel: 'claude-sonnet-4-5',
+    models: ['claude-sonnet-4-5'],
+    reasoningPolicy: 'none'
+  });
+  assert.strictEqual(anthropicDirect.authMode, 'secret');
+  assert(!JSON.stringify(api.exportableProfile(anthropicDirect)).includes('direct-anthropic-secret'),
+    'Anthropic exports must never contain a SecretStorage value');
   assert.throws(() => api.normalizeProfileFromGui({
     ...profile(), name: 'bad\nname', selectedModel: 'model-a'
   }), /control characters|控制字符/);
@@ -290,6 +304,47 @@ function plannedProfiles(plan) {
   assert.deepStrictEqual(stateFailureValues.get(stateFailureProfilesKey), rollbackPrevious);
   assert.strictEqual(stateFailureSecretWrites, 0,
     'a GlobalState failure must not partially update SecretStorage');
+
+  const anthropicValues = new Map();
+  const anthropicSecrets = new Map();
+  const anthropicContext = {
+    globalState: {
+      get(key, fallback) { return anthropicValues.has(key) ? anthropicValues.get(key) : fallback; },
+      async update(key, value) {
+        if (value === undefined) anthropicValues.delete(key); else anthropicValues.set(key, value);
+      }
+    },
+    secrets: {
+      async get(key) { return anthropicSecrets.get(key); },
+      async store(key, value) { anthropicSecrets.set(key, value); },
+      async delete(key) { anthropicSecrets.delete(key); }
+    }
+  };
+  const anthropicProfilesKey = api.environmentStateKey(anthropicContext, 'modelProfilesV2');
+  const anthropicSecretKey = api.profileSecretKey(anthropicContext, anthropicDirect.id);
+  const directSecret = 'direct-anthropic-secret';
+  await api.commitProfileAndSecret(anthropicContext, [], [anthropicDirect], anthropicDirect, directSecret);
+  assert.strictEqual(anthropicSecrets.get(anthropicSecretKey), directSecret,
+    'a direct Anthropic credential must be stored in VS Code SecretStorage');
+  assert(!JSON.stringify(anthropicValues.get(anthropicProfilesKey)).includes(directSecret),
+    'the persisted Anthropic profile must not contain its direct credential');
+  assert(!JSON.stringify(api.exportableProfile(anthropicDirect)).includes(directSecret),
+    'the exported Anthropic profile must not contain its direct credential');
+
+  const anthropicEnv = api.normalizeProfileFromGui({
+    ...anthropicDirect,
+    authMode: 'env',
+    envKey: 'ANTHROPIC_API_KEY'
+  }, anthropicDirect);
+  await api.commitProfileAndSecret(
+    anthropicContext,
+    [anthropicDirect],
+    [anthropicEnv],
+    anthropicEnv,
+    ''
+  );
+  assert.strictEqual(anthropicSecrets.has(anthropicSecretKey), false,
+    'switching an Anthropic profile to environment mode must delete its saved direct credential');
 
   const managedDir = path.join(sandbox, 'codex-management');
   fs.mkdirSync(managedDir, { recursive: true });

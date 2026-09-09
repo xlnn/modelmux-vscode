@@ -9,6 +9,47 @@ const root = path.resolve(__dirname, '..');
 const dashboardSource = fs.readFileSync(path.join(root, 'media', 'dashboard.js'), 'utf8');
 const dashboardCss = fs.readFileSync(path.join(root, 'media', 'dashboard.css'), 'utf8');
 
+function evaluateDashboardFunction(name, dependencies = '') {
+  const match = dashboardSource.match(new RegExp(`  function ${name}\\([\\s\\S]*?\\n  \\}`));
+  assert(match, `${name} is missing from the dashboard`);
+  return Function(`"use strict"; ${dependencies} ${match[0]} return ${name};`)();
+}
+
+const uniqueModelIds = evaluateDashboardFunction('uniqueModelIds');
+const isClaudeModelId = evaluateDashboardFunction('isClaudeModelId');
+const authModesForCustomKind = evaluateDashboardFunction('authModesForCustomKind');
+const filterModelsForProviderKind = evaluateDashboardFunction(
+  'filterModelsForProviderKind',
+  `${uniqueModelIds.toString()} ${isClaudeModelId.toString()}`
+);
+
+const mixedModels = ['gpt-5.6-sol', 'claude-sonnet-4-6', 'anthropic/claude-opus-4', 'gpt-5.6-sol'];
+assert.deepStrictEqual(
+  filterModelsForProviderKind(mixedModels, 'customResponses'),
+  ['gpt-5.6-sol'],
+  'OpenAI response formats must hide Claude-family models'
+);
+assert.deepStrictEqual(
+  filterModelsForProviderKind(mixedModels, 'customAnthropic'),
+  ['claude-sonnet-4-6', 'anthropic/claude-opus-4'],
+  'Anthropic response formats must show only Claude-family models'
+);
+assert.deepStrictEqual(
+  authModesForCustomKind('customResponses'),
+  ['secret', 'env', 'envHeaders', 'none'],
+  'OpenAI Responses gateways must retain all supported authentication modes'
+);
+assert.deepStrictEqual(
+  authModesForCustomKind('customAnthropic'),
+  ['secret', 'env', 'none'],
+  'Anthropic Messages gateways must support SecretStorage and environment-variable API keys'
+);
+assert.deepStrictEqual(
+  authModesForCustomKind('customChat'),
+  ['env', 'none'],
+  'OpenAI Chat gateways must retain their existing authentication restrictions'
+);
+
 const mockVscode = {
   env: { remoteName: undefined },
   workspace: { getConfiguration() { return { get(_key, fallback) { return fallback; } }; } },
@@ -90,8 +131,14 @@ try {
   assert(/id="modelSuggestions"[^>]*role="listbox"/i.test(html), 'model suggestions must use an in-document listbox');
   assert(!/<datalist\b/i.test(html), 'native datalist popups are clipped by scrollable Webview dialogs');
   assert(dashboardSource.includes('managementStatus'), 'dashboard must render explicit target management states');
-  assert(dashboardSource.includes('uniqueModelIds'), 'provider model choices must be deduplicated without family filtering');
-  assert(!dashboardSource.includes('isClaudeModelId'), 'model suggestions must not hide models based on their family');
+  assert(dashboardSource.includes('uniqueModelIds'), 'provider model choices must be deduplicated');
+  assert(dashboardSource.includes('isClaudeModelId'), 'dashboard must recognize Claude model IDs');
+  assert(dashboardSource.includes('filterModelsForProviderKind'), 'provider model choices must be filtered by response format');
+  assert(dashboardSource.includes('authModesForCustomKind'), 'dashboard must define authentication capabilities by provider type');
+  assert(!dashboardSource.includes("['customChat', 'customAnthropic'].includes(kind) && $('authMode').value === 'secret'"),
+    'Anthropic Messages providers must not be forced from SecretStorage to environment authentication');
+  assert(dashboardSource.includes('API Key in SecretStorage'), 'SecretStorage auth label must identify the stored API key');
+  assert(dashboardSource.includes('SecretStorage 中的 API Key'), 'Chinese SecretStorage auth label must identify the stored API key');
   assert(dashboardSource.includes('profile.managedForSelectedTarget ? t(\'reapply\') : t(\'activate\')'), 'a drifted managed provider must expose the reapply action');
   assert(dashboardSource.includes("result.status === 'cancelled'"), 'cancelled reapply confirmation must not be reported as an activation failure');
   for (const capability of ['canRestore', 'canApply', 'canEdit', 'canDelete', 'canClearSecret']) {

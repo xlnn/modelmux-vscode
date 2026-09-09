@@ -28,6 +28,7 @@ Module._load = function(request, parent, isMain) {
 };
 
 const api = require('../extension.js').__test;
+const extensionSource = fs.readFileSync(path.join(__dirname, '..', 'extension.js'), 'utf8');
 
 function profile(input) {
   return api.normalizeProfileFromGui(input);
@@ -43,6 +44,12 @@ const customAnthropic = profile({
   baseUrl: 'https://claude.example/v1', authMode: 'env', envKey: 'ANTHROPIC_API_KEY',
   selectedModel: 'claude-model', models: ['claude-model'], reasoningPolicy: 'none'
 });
+const directAnthropic = profile({
+  kind: 'customAnthropic', name: 'Direct Claude Gateway', providerId: 'direct_claude_gateway',
+  baseUrl: 'https://direct-claude.example/v1', authMode: 'secret', envKey: 'IGNORED_FOR_DIRECT_MODE',
+  selectedModel: 'claude-direct-model', models: ['claude-direct-model'], reasoningPolicy: 'none'
+});
+const directAnthropicKey = 'direct-anthropic-key';
 const driftChat = {
   ...customChat,
   id: 'drift-chat-profile',
@@ -65,6 +72,12 @@ try {
   assert.strictEqual(claudeConfig.model, 'claude-model');
   assert.strictEqual(claudeConfig.env.ANTHROPIC_BASE_URL, 'https://claude.example/v1');
   assert.deepStrictEqual(claudeConfig.permissions, { allow: [] });
+
+  const directClaudeConfig = JSON.parse(api.buildTargetConfig(
+    'claude', directAnthropic, 'claude-direct-model', '{"permissions":{"allow":[]}}', directAnthropicKey
+  ));
+  assert.strictEqual(directClaudeConfig.env.ANTHROPIC_BASE_URL, 'https://direct-claude.example/v1');
+  assert.strictEqual(directClaudeConfig.env.ANTHROPIC_API_KEY, directAnthropicKey);
 
   const geminiConfig = JSON.parse(api.buildTargetConfig('gemini', gemini, 'gemini-2.5-pro', '{"theme":"Default"}'));
   assert.strictEqual(geminiConfig.model.name, 'gemini-2.5-pro');
@@ -111,6 +124,12 @@ try {
   assert.strictEqual(anthropicOpenCode.provider.claude_gateway.npm, '@ai-sdk/anthropic');
   assert.strictEqual(anthropicOpenCode.provider.claude_gateway.options.apiKey, '{env:ANTHROPIC_API_KEY}');
 
+  const directAnthropicOpenCode = JSON5.parse(api.buildTargetConfig(
+    'opencode', directAnthropic, 'claude-direct-model', '{}\n', directAnthropicKey
+  ));
+  assert.strictEqual(directAnthropicOpenCode.provider.direct_claude_gateway.npm, '@ai-sdk/anthropic');
+  assert.strictEqual(directAnthropicOpenCode.provider.direct_claude_gateway.options.apiKey, directAnthropicKey);
+
   const openClaw = JSON.parse(api.buildTargetConfig('openclaw', customChat, 'chat-model', '{"gateway":{"port":18789}}'));
   assert.strictEqual(openClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
   assert.strictEqual(openClaw.models.providers.chat_gateway.api, 'openai-completions');
@@ -121,20 +140,49 @@ try {
   assert.strictEqual(repairedOpenClaw.agents.defaults.model.primary, 'chat_gateway/chat-model');
   assert.strictEqual(repairedOpenClaw.models.providers.chat_gateway.api, 'openai-completions');
 
+  const directAnthropicOpenClaw = JSON.parse(api.buildTargetConfig(
+    'openclaw', directAnthropic, 'claude-direct-model', '{}\n', directAnthropicKey
+  ));
+  assert.strictEqual(directAnthropicOpenClaw.models.providers.direct_claude_gateway.api, 'anthropic-messages');
+  assert.strictEqual(directAnthropicOpenClaw.models.providers.direct_claude_gateway.apiKey, directAnthropicKey);
+
   const hermes = YAML.parse(api.buildTargetConfig('hermes', customAnthropic, 'claude-model', 'terminal:\n  theme: dark\n'));
   assert.strictEqual(hermes.model.provider, 'custom:claude_gateway');
   assert.strictEqual(hermes.providers.claude_gateway.transport, 'anthropic_messages');
   assert.strictEqual(hermes.terminal.theme, 'dark');
+  const directAnthropicHermes = YAML.parse(api.buildTargetConfig(
+    'hermes', directAnthropic, 'claude-direct-model', '{}\n', directAnthropicKey
+  ));
+  assert.strictEqual(directAnthropicHermes.providers.direct_claude_gateway.transport, 'anthropic_messages');
+  assert.strictEqual(directAnthropicHermes.providers.direct_claude_gateway.key, directAnthropicKey);
   const hermesGemini = YAML.parse(api.buildTargetConfig('hermes', gemini, 'gemini-2.5-pro', '{}\n'));
   assert.strictEqual(hermesGemini.model.provider, 'gemini');
 
   const secretChat = { ...customChat, authMode: 'secret' };
   assert.strictEqual(api.targetCompatibility('opencode', secretChat).supported, false);
-  assert.throws(() => profile({ ...customChat, id: undefined, authMode: 'secret' }), /only supports environment-variable authentication|仅支持环境变量认证或无认证/);
+  assert.throws(
+    () => profile({ ...customChat, id: undefined, authMode: 'secret' }),
+    /only supports environment-variable authentication|仅支持环境变量认证或无认证|does not support the selected authentication mode|不支持所选认证方式/
+  );
+  assert.throws(
+    () => api.buildTargetConfig('opencode', directAnthropic, 'claude-direct-model', '{}\n'),
+    /missing.*API Key|缺少 API Key/i
+  );
   assert.strictEqual(api.targetCompatibility('codex', customChat).supported, false);
   assert.strictEqual(api.targetCompatibility('claude', customAnthropic).supported, true);
+  assert.strictEqual(api.targetCompatibility('claude', directAnthropic).supported, true,
+    'Claude environment-variable name restrictions must not apply to direct credentials');
+  for (const targetId of ['claude', 'opencode', 'openclaw', 'hermes']) {
+    assert.strictEqual(api.targetCompatibility(targetId, directAnthropic).supported, true,
+      `${targetId} must accept direct Anthropic credentials`);
+  }
+  assert(extensionSource.includes("if (profile.kind !== 'customResponses') authChoices = authChoices.filter(item => item.value !== 'envHeaders')"),
+    'the command-palette editor must not offer unsupported header authentication for Anthropic gateways');
+  assert(extensionSource.includes("profile.kind === 'customAnthropic' ? '$(symbol-variable) API Key 环境变量'"),
+    'the command-palette editor must describe Anthropic environment authentication as an API key');
 
   const values = new Map();
+  const storedSecrets = new Map();
   let failActiveStateUpdates = false;
   const context = {
     globalState: {
@@ -146,8 +194,13 @@ try {
         }
       }
     },
-    secrets: { async get() { return undefined; }, async store() {}, async delete() {} }
+    secrets: {
+      async get(key) { return storedSecrets.get(key); },
+      async store(key, value) { storedSecrets.set(key, value); },
+      async delete(key) { storedSecrets.delete(key); }
+    }
   };
+  storedSecrets.set(api.profileSecretKey(context, directAnthropic.id), directAnthropicKey);
   const profilesStateKey = api.environmentStateKey(context, 'modelProfilesV2');
   values.set(profilesStateKey, [grok, customChat, driftChat, missingConfigChat]);
   const statusBar = { show() {}, text: '', tooltip: '' };
@@ -179,6 +232,16 @@ try {
     await api.updateActiveTarget(context, 'claude', undefined);
     await api.updateActiveTarget(context, 'hermes', undefined);
 
+    for (const targetId of ['claude', 'opencode', 'openclaw', 'hermes']) {
+      const preview = await api.proposedTargetContent(
+        context, targetId, directAnthropic, 'claude-direct-model'
+      );
+      assert(preview.includes('<stored in protected configuration>'),
+        `${targetId} preview must use a credential placeholder`);
+      assert(!preview.includes(directAnthropicKey),
+        `${targetId} preview must not read or reveal the SecretStorage credential`);
+    }
+
     const codexHash = api.contentHash('model = "gpt-5"\nmodel_provider = "openai"\n');
     const gatewayHash = api.contentHash('model = "gpt-5"\nmodel_provider = "gateway"\n');
     assert.match(codexHash, /^[a-f0-9]{64}$/);
@@ -201,6 +264,17 @@ try {
     assert(api.getActiveTargets(context).grok);
     assert(api.getActiveTargets(context).openclaw);
     assert(fs.readFileSync(openClawFiles.config, 'utf8').includes('chat_gateway/chat-model'));
+
+    const claudeFiles = api.pathsForTarget('claude');
+    await api.activateExternalTarget(context, 'claude', directAnthropic, 'claude-direct-model');
+    assert.strictEqual(
+      JSON.parse(fs.readFileSync(claudeFiles.config, 'utf8')).env.ANTHROPIC_API_KEY,
+      directAnthropicKey,
+      'activation must resolve the direct Anthropic key from SecretStorage'
+    );
+    await api.restoreExternalTarget(context, 'claude');
+    assert(!fs.existsSync(claudeFiles.config),
+      'restoring a target that originally had no configuration must remove the managed direct credential');
 
     await api.restoreExternalTarget(context, 'grok');
     assert.strictEqual(fs.readFileSync(grokFiles.config, 'utf8'), originalGrok);

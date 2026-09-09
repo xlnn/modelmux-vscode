@@ -3,8 +3,12 @@
 .github/**
 .vscode/**
 extension.js
+codex-chat-bridge.js
 node_modules/**
 scripts/**
 test/**
 media/modelmux-color.svg
 *.vsix
+.probe-request.json
+.tmp-*
+.tmp-*/**

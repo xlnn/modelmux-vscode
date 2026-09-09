@@ -1,0 +1,7 @@
+model = "claude-opus-5"
+model_provider = "probe"
+[model_providers.probe]
+name = "Probe"
+base_url = "http://127.0.0.1:39765/v1"
+wire_api = "responses"
+experimental_bearer_token = "test"

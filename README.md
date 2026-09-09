@@ -1,4 +1,4 @@
-# ModelMux: AI CLI Model Manager 1.5.4
+# ModelMux: AI CLI Model Manager 1.5.6
 
 [中文说明](#中文说明)
 
@@ -13,12 +13,23 @@ It independently manages Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, O
 - Keep independent model selections active for different CLIs at the same time.
 - Back up the original configuration before first activation and restore it safely later.
 - Detect external changes before overwriting a managed configuration.
-- Store Codex credentials in VS Code SecretStorage and use environment-variable references for other CLIs.
+- Store Codex and Anthropic Messages gateway credentials in VS Code SecretStorage, or use environment-variable references for Anthropic gateways.
 - Import and export portable provider profiles without API keys.
 - Use English or Simplified Chinese. English is the default language.
 - Choose the VS Code default font, system UI font, or monospace font.
 - Adjust the dashboard font size from `10px` to `20px` in the ModelMux Settings panel.
 - Restore the VS Code default font or reset the complete appearance configuration with one action.
+
+## What's New in 1.5.6
+
+- Anthropic Messages gateways now support both a direct API key stored in VS Code SecretStorage and an environment-variable reference.
+- Direct keys are copied into the selected CLI's protected managed configuration only while that provider is active; restoring the original configuration removes or replaces the managed key.
+- Provider exports, diagnostics, and configuration previews never include the direct API key.
+
+## What's New in 1.5.5
+
+- Filter model choices by the selected response format: OpenAI Responses and Chat providers show OpenAI-compatible models, while Anthropic Messages providers show Claude-compatible models.
+- Apply the same filtering to provider rows, searchable model suggestions, editing, and `/models` refresh results.
 
 ## What's New in 1.5.4
 
@@ -83,7 +94,7 @@ To install the packaged VSIX manually:
 1. Open the VS Code Extensions view.
 2. Open the `...` menu in the upper-right corner.
 3. Select **Install from VSIX...**.
-4. Select `modelmux-1.5.4.vsix`.
+4. Select `modelmux-1.5.6.vsix`.
 5. Run `Developer: Reload Window`.
 
 For Remote-SSH, WSL, Dev Containers, or Codespaces, install ModelMux in the corresponding remote extension host. ModelMux only changes CLI configuration files in the environment where the extension is running. Provider profiles, active records, and stored API keys are isolated from the local host and from other remote authorities.
@@ -148,11 +159,15 @@ The Settings panel previews typography changes immediately. Provider actions can
 
 ### SecretStorage
 
-Codex API keys can be stored in VS Code SecretStorage and are never included in exported profile JSON. Linux and macOS use a user-only runtime token file. On Windows, compatibility with some Codex versions may require a bearer token in the managed `config.toml`; ModelMux applies a restricted ACL and removes or replaces that managed file when the original configuration is restored.
+Codex and Anthropic Messages gateway API keys can be stored in VS Code SecretStorage and are never included in exported profile JSON, diagnostics, or configuration previews. SecretStorage remains ModelMux's source of truth.
+
+Codex on Linux and macOS uses a user-only runtime token file. On Windows, compatibility with some Codex versions may require a bearer token in the managed `config.toml`; ModelMux applies a restricted ACL and removes or replaces that managed file when the original configuration is restored.
+
+When a direct Anthropic Messages key is activated for Claude Code, OpenCode, OpenClaw, or Hermes, ModelMux copies the key into that CLI's protected managed configuration because these CLIs read credentials from their own configuration. The target file therefore contains the credential while the provider is active. Restoring or replacing the managed configuration removes or replaces that copy. Environment-variable mode is preferable for long-running services and shared machines.
 
 ### Environment Variables
 
-Custom providers for other CLIs store only an environment-variable name or supported secret reference in the target configuration. The API key value is never written to provider exports or ModelMux state.
+Custom providers can store an environment-variable name or supported secret reference in the target configuration instead of a direct key. The API key value is never written to provider exports or ModelMux state.
 
 Example:
 
@@ -208,26 +223,26 @@ Development and CI use Node.js 22 or newer. The extension bundle remains targete
 The package command reads the package version dynamically and generates:
 
 ```text
-modelmux-1.5.4.vsix
+modelmux-1.5.6.vsix
 ```
 
 The smoke suite covers manifest metadata, appearance settings and localization, export redaction, Webview CSP/DOM/accessibility boundaries, import conflict handling, Codex configuration generation, all six additional CLI adapters, concurrent target state, isolated restore, credential handling, model discovery security, and the bundled extension entry point. GitHub CI runs `npm ci`, `npm run check`, `npm test`, and `npm run build` on Ubuntu, Windows, and macOS.
 
 ## Publishing
 
-Upload `modelmux-1.5.4.vsix` from the Visual Studio Marketplace publisher portal, or publish it from the command line with a Personal Access Token for the `cherry-local` publisher:
+Upload `modelmux-1.5.6.vsix` from the Visual Studio Marketplace publisher portal, or publish it from the command line with a Personal Access Token for the `cherry-local` publisher:
 
 ```bash
-npx vsce publish --packagePath modelmux-1.5.4.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.5.6.vsix -p "$VSCE_PAT"
 ```
 
 PowerShell:
 
 ```powershell
-npx vsce publish --packagePath modelmux-1.5.4.vsix -p $env:VSCE_PAT
+npx vsce publish --packagePath modelmux-1.5.6.vsix -p $env:VSCE_PAT
 ```
 
-The repository is configured as `xlnn/modelmux-vscode`. Push the version commit first, then create `v1.5.4` on that exact commit and publish the GitHub Release. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies the release tag against `package.json`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
+The repository is configured as `xlnn/modelmux-vscode`. Push the version commit first, then create `v1.5.6` on that exact commit and publish the GitHub Release. The included `.github/workflows/release.yml` runs checks, packages exactly one versioned VSIX, verifies the release tag against `package.json`, attaches the package to that release, and publishes to the VS Code Marketplace when the `VSCE_PAT` repository secret is available.
 
 ## Extension Identity
 
@@ -252,11 +267,22 @@ MIT
 
 ## 中文说明
 
-### ModelMux：AI CLI 模型管理器 1.5.4
+### ModelMux：AI CLI 模型管理器 1.5.6
 
 一个面向 **Windows、macOS、Linux、WSL、Remote-SSH、Dev Container 与 GitHub Codespaces** 的 VS Code 图形化 AI CLI 配置管理插件。
 
 插件可独立切换 Codex、Claude Code、Gemini CLI、Grok Build、OpenCode、OpenClaw 与 Hermes 的默认 Provider/模型，支持原配置备份、恢复、外部改动检测、环境自检以及不含密钥的 Provider 迁移。
+
+## 1.5.6 Anthropic Messages 双认证
+
+- Anthropic Messages 网关同时支持两种方式：直接填写 Base URL + API Key（密钥保存在 VS Code SecretStorage），或填写 Base URL + API Key 环境变量名。
+- 直接密钥模式启用后，ModelMux 会在 Provider 活动期间把密钥写入目标 CLI 受保护的托管配置；恢复原配置时会删除或替换该托管密钥。
+- Provider 导出、诊断和配置预览不会显示或包含直接 API Key。
+
+## 1.5.5 响应格式模型筛选
+
+- 根据 Provider 的响应格式筛选模型：OpenAI Responses/Chat 仅显示 OpenAI 兼容模型，Anthropic Messages 仅显示 Claude 兼容模型。
+- Provider 列表、可搜索模型候选项、编辑窗口和 `/models` 刷新结果使用同一筛选规则，避免误选不兼容模型。
 
 ## 1.5.4 发布修复
 
@@ -339,7 +365,7 @@ Provider 列表项会根据当前 CLI 和协议显示是否兼容。不兼容组
 1. 打开 VS Code 扩展面板。
 2. 点击右上角 `...`。
 3. 选择 **从 VSIX 安装…**。
-4. 选择 `modelmux-1.5.4.vsix`。
+4. 选择 `modelmux-1.5.6.vsix`。
 5. 执行 `Developer: Reload Window`。
 
 在 Remote-SSH、WSL、Dev Container 或 Codespaces 窗口中，应将插件安装在对应的远程扩展主机上。插件只修改它实际运行环境中的 CLI 配置；Provider、活动记录和 API Key 与本机及其它远程 authority 分开保存。
@@ -362,7 +388,11 @@ Provider 列表项会根据当前 CLI 和协议显示是否兼容。不兼容组
 
 ### SecretStorage 模式
 
-Codex API Key 长期保存在 VS Code SecretStorage 中，不写入导出 JSON。Linux/macOS 使用仅当前用户可读的临时令牌文件。Windows 为兼容部分 Codex 版本，会在启用期间将 Bearer Token 写入受 ACL 保护的托管 `config.toml`；恢复原配置后该文件被替换或删除。
+Codex 和 Anthropic Messages 网关的 API Key 可长期保存在 VS Code SecretStorage 中；SecretStorage 是 ModelMux 内部的凭据来源。密钥不会进入 Provider 导出、诊断或配置预览。
+
+Codex 在 Linux/macOS 使用仅当前用户可读的临时令牌文件。Windows 为兼容部分 Codex 版本，会在启用期间将 Bearer Token 写入受 ACL 保护的托管 `config.toml`；恢复原配置后该文件被替换或删除。
+
+直接密钥模式用于 Claude Code、OpenCode、OpenClaw 或 Hermes 时，由于这些 CLI 从自身配置读取凭据，ModelMux 会在 Provider 活动期间把 API Key 复制到目标 CLI 受保护的托管配置中。因此目标文件在启用期间含有该密钥；恢复或替换托管配置后，这份密钥会被删除或替换。常驻服务和共享设备更建议使用环境变量模式。
 
 - Windows：位于 `%TEMP%\codex-model-profile-manager\...`，并强制应用及验证当前用户 ACL；
 - Linux：优先位于 `/run/user/<uid>`，否则回退到用户临时目录；
@@ -370,7 +400,7 @@ Codex API Key 长期保存在 VS Code SecretStorage 中，不写入导出 JSON�
 
 ### 环境变量模式
 
-其它 CLI 的自定义 Provider 只写环境变量名称或官方 SecretRef，不把 API Key 明文写入配置。应从设置了相应变量的终端启动 CLI，例如：
+自定义 Provider 可选择只在目标配置中写入环境变量名称或官方 SecretRef，而不写入直接 API Key。应从设置了相应变量的终端启动 CLI，例如：
 
 ```bash
 MODEL_SWITCH_API_KEY=your-key
@@ -435,23 +465,23 @@ npm run build
 npm run package
 ```
 
-开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.5.4.vsix`。
+开发与 CI 要求 Node.js 22 或更高版本；扩展 bundle 继续以 Node 20 为目标。`npm run package` 根据 `package.json` 版本动态生成 `modelmux-1.5.6.vsix`。
 
 ## 发布
 
-可在 Visual Studio Marketplace 的 Publisher 管理页面直接上传 `modelmux-1.5.4.vsix`，也可以使用 Publisher `cherry-local` 的 Personal Access Token 从命令行发布：
+可在 Visual Studio Marketplace 的 Publisher 管理页面直接上传 `modelmux-1.5.6.vsix`，也可以使用 Publisher `cherry-local` 的 Personal Access Token 从命令行发布：
 
 ```bash
-npx vsce publish --packagePath modelmux-1.5.4.vsix -p "$VSCE_PAT"
+npx vsce publish --packagePath modelmux-1.5.6.vsix -p "$VSCE_PAT"
 ```
 
 Windows PowerShell：
 
 ```powershell
-npx vsce publish --packagePath modelmux-1.5.4.vsix -p $env:VSCE_PAT
+npx vsce publish --packagePath modelmux-1.5.6.vsix -p $env:VSCE_PAT
 ```
 
-仓库包含 `.github/workflows/release.yml`。先推送版本提交，再从该提交创建并发布 `v1.5.4` 标签。发布流程使用 Node.js 22，执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`，随后校验标签与 `package.json` 版本一致，只生成并上传当前版本的 VSIX；仓库配置 `VSCE_PAT` 后会继续发布到 VS Code Marketplace。
+仓库包含 `.github/workflows/release.yml`。先推送版本提交，再从该提交创建并发布 `v1.5.6` 标签。发布流程使用 Node.js 22，执行与 CI 相同的 `npm ci`、`npm run check`、`npm test`、`npm run build`，随后校验标签与 `package.json` 版本一致，只生成并上传当前版本的 VSIX；仓库配置 `VSCE_PAT` 后会继续发布到 VS Code Marketplace。
 
 GitHub CI 在 Ubuntu、Windows、macOS 上使用 Node.js 22 执行安装、语法检查、冒烟测试和 bundle 构建。现有测试覆盖：
 
