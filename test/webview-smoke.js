@@ -31,8 +31,19 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   filterModelsForProviderKind(mixedModels, 'customAnthropic'),
-  ['claude-sonnet-4-6', 'anthropic/claude-opus-4'],
-  'Anthropic response formats must show only Claude-family models'
+  ['gpt-5.6-sol', 'claude-sonnet-4-6', 'anthropic/claude-opus-4'],
+  'Anthropic Messages gateways must keep every model returned by the gateway'
+);
+const anthropicGatewayModels = ['glm-4.6', 'kimi-k2-0905-preview', 'deepseek-chat', 'qwen3-coder-plus', 'MiniMax-M2'];
+assert.deepStrictEqual(
+  filterModelsForProviderKind(anthropicGatewayModels, 'customAnthropic'),
+  anthropicGatewayModels,
+  'custom Claude sources that serve non-Claude models must still list them'
+);
+assert.deepStrictEqual(
+  filterModelsForProviderKind(['opusplan', 'sonnet[1m]', 'claude-opus-4-1'], 'anthropic'),
+  ['opusplan', 'sonnet[1m]', 'claude-opus-4-1'],
+  'Claude Code model aliases must remain selectable for official Anthropic providers'
 );
 assert.deepStrictEqual(
   authModesForCustomKind('customResponses'),

@@ -73,6 +73,21 @@ try {
   assert.strictEqual(discoveryWithBaseQuery.searchParams.get('tenant'), 'alpha');
   assert.strictEqual(discoveryWithBaseQuery.searchParams.get('view'), 'full');
   assert.strictEqual(discoveryWithBaseQuery.searchParams.get('api-version'), '2025-04-01-preview');
+  const anthropicDiscovery = (baseUrl, modelDiscoveryPath = '/models') => api.modelDiscoveryUrl({
+    kind: 'customAnthropic', baseUrl, modelDiscoveryPath
+  });
+  assert.strictEqual(anthropicDiscovery('https://api.anthropic.com'), 'https://api.anthropic.com/v1/models',
+    'Anthropic base URLs without /v1 must discover models at /v1/models');
+  assert.strictEqual(anthropicDiscovery('https://open.bigmodel.cn/api/anthropic/'),
+    'https://open.bigmodel.cn/api/anthropic/v1/models');
+  assert.strictEqual(anthropicDiscovery('https://claude.example/v1'), 'https://claude.example/v1/models',
+    'Anthropic base URLs that already end at /v1 must not repeat it');
+  assert.strictEqual(anthropicDiscovery('https://claude.example', 'https://claude.example/models'), 'https://claude.example/models',
+    'an explicit discovery URL must be used as written');
+  assert.strictEqual(anthropicDiscovery('https://claude.example', '/api/models'), 'https://claude.example/api/models',
+    'a custom discovery path must be used as written');
+  assert.strictEqual(api.modelDiscoveryUrl({ kind: 'customChat', baseUrl: 'https://chat.example', modelDiscoveryPath: '/models' }),
+    'https://chat.example/models', 'OpenAI-compatible discovery must keep the configured path');
   const responsesEndpointProfile = api.normalizeProfileFromGui({
     ...envProfile,
     baseUrl: 'https://example.openai.azure.com/openai/v1/responses?api-version=2025-04-01-preview'
