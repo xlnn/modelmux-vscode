@@ -729,6 +729,10 @@ function modelDiscoveryUrl(profile) {
   } else {
     url = new URL(validatedBase.normalized);
     const relative = new URL(custom.startsWith('/') ? custom : `/${custom}`, 'https://modelmux.invalid');
+    // Anthropic base URLs (ANTHROPIC_BASE_URL) normally stop before /v1; the model list is served at /v1/models.
+    if (profile.kind === 'customAnthropic' && relative.pathname === '/models' && !/\/v1$/i.test(url.pathname)) {
+      relative.pathname = '/v1/models';
+    }
     url.pathname = `${url.pathname.replace(/\/+$/, '')}/${relative.pathname.replace(/^\/+/, '')}`;
     for (const [key, value] of relative.searchParams) url.searchParams.set(key, value);
   }
@@ -2482,6 +2486,12 @@ async function fetchModelsForProfile(context, profile, apiKeyOverride) {
     throw new Error(uiText('None of the configured header environment variables are visible to VS Code. Set them and restart or reload VS Code.', '环境变量请求头均未在当前 VS Code 进程中找到。请设置变量并重新启动或重新加载 VS Code。'));
   }
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (profile.kind === 'customAnthropic') {
+    // Anthropic Messages clients send x-api-key; Bearer is kept for gateways that only read Authorization.
+    const hasHeader = name => Object.keys(headers).some(header => header.toLowerCase() === name);
+    if (!hasHeader('anthropic-version')) headers['anthropic-version'] = '2023-06-01';
+    if (apiKey && !hasHeader('x-api-key')) headers['x-api-key'] = apiKey;
+  }
 
   const settings = readGlobalSettings();
   const allowInsecure = Boolean(profile.allowInsecureModelDiscovery);

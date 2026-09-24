@@ -405,7 +405,8 @@
 
   function filterModelsForProviderKind(models, kind) {
     const unique = uniqueModelIds(models);
-    if (['customAnthropic', 'anthropic'].includes(kind)) return unique.filter(isClaudeModelId);
+    // Anthropic Messages providers keep every ID: compatible gateways also serve GLM, Kimi,
+    // DeepSeek, Qwen and other models, and Claude Code accepts aliases such as opusplan.
     if (['customResponses', 'customChat', 'openai'].includes(kind)) {
       return unique.filter(model => !isClaudeModelId(model));
     }

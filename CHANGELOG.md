@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Show every model returned by an Anthropic Messages gateway. Custom Claude sources that serve GLM, Kimi, DeepSeek, Qwen, or other non-Claude models no longer show an empty model list, and their saved models stay selectable and can be activated.
+- Keep Claude Code model aliases such as `opusplan` and `sonnet[1m]` selectable for official Anthropic providers.
+- Discover Anthropic Messages gateway models at `/v1/models` when the Base URL does not already end at `/v1`, and send the `x-api-key` and `anthropic-version` headers that Anthropic-compatible APIs expect. A full discovery URL or a custom discovery path is still used as written.
+
 ## 1.5.6
 
 - Add two authentication modes for Anthropic Messages gateways: a direct API key stored in VS Code SecretStorage, or an environment-variable reference.

@@ -208,6 +208,45 @@ function plannedProfiles(plan) {
     await new Promise(resolve => oversizedServer.close(resolve));
   }
 
+  const discoveryRequests = [];
+  const discoveryServer = http.createServer((request, response) => {
+    discoveryRequests.push({ url: request.url, headers: request.headers });
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ data: [{ id: 'glm-4.6' }, { id: 'claude-sonnet-4-5' }] }));
+  });
+  await new Promise((resolve, reject) => {
+    discoveryServer.once('error', reject);
+    discoveryServer.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const origin = `http://127.0.0.1:${discoveryServer.address().port}`;
+    const discoveryValues = new Map();
+    const discoveryContext = {
+      globalState: {
+        get(key, fallback) { return discoveryValues.has(key) ? discoveryValues.get(key) : fallback; },
+        async update(key, value) { discoveryValues.set(key, value); }
+      },
+      secrets: { async get() { return 'discovery-api-key'; } }
+    };
+    await api.saveProfiles(discoveryContext, [
+      profile({ id: 'anthropic-discovery', kind: 'customAnthropic', authMode: 'secret', baseUrl: origin }),
+      profile({ id: 'responses-discovery', authMode: 'secret', baseUrl: `${origin}/v1` })
+    ]);
+    const anthropicResult = await api.testProviderConnection(discoveryContext, 'anthropic-discovery');
+    assert.strictEqual(anthropicResult.models, 2);
+    assert.strictEqual(discoveryRequests[0].url, '/v1/models', 'Anthropic gateways must be queried at /v1/models');
+    assert.strictEqual(discoveryRequests[0].headers['x-api-key'], 'discovery-api-key',
+      'Anthropic model discovery must send the API key the way Anthropic clients do');
+    assert.strictEqual(discoveryRequests[0].headers.authorization, 'Bearer discovery-api-key');
+    assert.strictEqual(discoveryRequests[0].headers['anthropic-version'], '2023-06-01');
+    await api.testProviderConnection(discoveryContext, 'responses-discovery');
+    assert.strictEqual(discoveryRequests[1].url, '/v1/models');
+    assert.strictEqual(discoveryRequests[1].headers['x-api-key'], undefined, 'OpenAI-compatible discovery must not send Anthropic headers');
+    assert.strictEqual(discoveryRequests[1].headers['anthropic-version'], undefined);
+  } finally {
+    await new Promise(resolve => discoveryServer.close(resolve));
+  }
+
   assert.doesNotThrow(() => api.validateWebviewMessage({ command: 'ready' }));
   assert.doesNotThrow(() => api.validateWebviewMessage({
     command: 'activateProfile',
