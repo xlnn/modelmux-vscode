@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0
 
 - Show every model returned by an Anthropic Messages gateway. Custom Claude sources that serve GLM, Kimi, DeepSeek, Qwen, or other non-Claude models no longer show an empty model list, and their saved models stay selectable and can be activated.
 - Keep Claude Code model aliases such as `opusplan` and `sonnet[1m]` selectable for official Anthropic providers.
