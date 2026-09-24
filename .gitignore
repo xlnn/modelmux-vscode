@@ -3,3 +3,5 @@ dist/
 *.vsix
 *.log
 .DS_Store
+.tmp-*
+.probe-request.json
