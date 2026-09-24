@@ -3,3 +3,4 @@ dist/
 *.vsix
 *.log
 .DS_Store
+/.tmp-codex-home*/
